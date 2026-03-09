@@ -55,8 +55,8 @@ build() {
   bun install
 
   cd "$srcdir/comraw"
-  npm install --no-audit --no-fund
-  npm run build
+  bun install --no-audit --no-fund
+  bun run build
 }
 
 package() {
