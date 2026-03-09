@@ -279,6 +279,12 @@ export interface Compositor {
   onPointerLockRequest(callback: (data: { window: string; lock: boolean }) => void): Unsubscribe;
 
   /**
+   * Subscribe to environment variable updates from the compositor
+   * (e.g. DISPLAY becoming available after XWayland starts).
+   */
+  onEnvUpdate(callback: (vars: Record<string, string>) => void): Unsubscribe;
+
+  /**
    * Subscribe to generic portal requests so clients can provide custom UI.
    */
   onPortalRequest(callback: (data: PortalRequestEvent) => void): Unsubscribe;

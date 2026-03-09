@@ -30,6 +30,7 @@ export const MAGIC = {
   FORWARD_KEYBOARD: 0x574F4B45, // "WOKE" — forwarded keyboard from web UI canvas
   FORWARD_RELATIVE_POINTER: 0x574F5245, // "WORE" — forwarded relative pointer (dx/dy)
   POINTER_LOCK_REQUEST: 0x574F504C, // "WOPL" — server-to-client pointer lock request
+  ENV_UPDATE: 0x574F4555,           // "WOEU" — environment variable update broadcast
 } as const;
 
 /**
@@ -90,6 +91,11 @@ export interface PointerLockRequestEvent {
   lock: boolean;
 }
 
+export interface EnvUpdateEvent {
+  type: 'envUpdate';
+  vars: Record<string, string>;
+}
+
 export type InputEvent =
   | MouseMoveEvent
   | MouseButtonEvent
@@ -97,7 +103,8 @@ export type InputEvent =
   | ScrollEvent
   | FocusChangeEvent
   | WindowMetadataEvent
-  | PointerLockRequestEvent;
+  | PointerLockRequestEvent
+  | EnvUpdateEvent;
 
 /**
  * Compositor Actions from Client → Compositor

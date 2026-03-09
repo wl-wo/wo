@@ -650,3 +650,55 @@ impl KeyboardShortcutsInhibitHandler for WoState {
 }
 
 smithay::delegate_keyboard_shortcuts_inhibit!(WoState);
+
+/// Propagate environment variables to the DBus session and systemd user
+/// manager so that applications launched via desktop entries, D-Bus
+/// activation, or Steam inherit DISPLAY and WAYLAND_DISPLAY.
+pub fn propagate_environment(vars: &[&str]) {
+    use tracing::{info, warn};
+
+    let var_args: Vec<String> = vars
+        .iter()
+        .filter_map(|&name| {
+            std::env::var(name).ok().map(|val| format!("{name}={val}"))
+        })
+        .collect();
+
+    if var_args.is_empty() {
+        return;
+    }
+
+    let names: Vec<&str> = vars
+        .iter()
+        .filter(|&&name| std::env::var(name).is_ok())
+        .copied()
+        .collect();
+
+    // dbus-update-activation-environment sets variables for D-Bus-activated services.
+    let mut dbus_cmd = std::process::Command::new("dbus-update-activation-environment");
+    dbus_cmd.arg("--systemd");
+    for arg in &var_args {
+        dbus_cmd.arg(arg);
+    }
+    match dbus_cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+        Ok(mut child) => {
+            let _ = child.wait();
+            info!("Propagated {:?} to DBus activation environment", names);
+        }
+        Err(e) => warn!("dbus-update-activation-environment failed: {e}"),
+    }
+
+    // systemctl --user import-environment sets variables for systemd user services.
+    let mut systemctl_cmd = std::process::Command::new("systemctl");
+    systemctl_cmd.arg("--user").arg("import-environment");
+    for name in &names {
+        systemctl_cmd.arg(name);
+    }
+    match systemctl_cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+        Ok(mut child) => {
+            let _ = child.wait();
+            info!("Propagated {:?} to systemd user environment", names);
+        }
+        Err(e) => warn!("systemctl --user import-environment failed: {e}"),
+    }
+}

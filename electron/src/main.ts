@@ -1156,6 +1156,29 @@ function connectToCompositor(): Promise<void> {
           continue;
         }
 
+        if (magic === MAGIC.ENV_UPDATE) {
+          // magic(4) + json_len(4) + json(N) = 8 + N bytes
+          if (compositorRxBuffer.length < 8) break;
+          const jsonLen = compositorRxBuffer.readUInt32LE(4);
+          if (compositorRxBuffer.length < 8 + jsonLen) break;
+          const jsonStr = compositorRxBuffer.slice(8, 8 + jsonLen).toString('utf8');
+          compositorRxBuffer = compositorRxBuffer.slice(8 + jsonLen);
+
+          try {
+            const vars = JSON.parse(jsonStr) as Record<string, string>;
+            for (const [key, value] of Object.entries(vars)) {
+              process.env[key] = value;
+              debugLog(`[Wo] env update: ${key}=${value}`);
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('wo:env-update', vars);
+            }
+          } catch (err) {
+            debugLog('[Wo] ENV_UPDATE parse error:', err);
+          }
+          continue;
+        }
+
         // Unknown message magic; resync by advancing one byte.
         debugLog('[Wo] UNKNOWN magic 0x' + magic.toString(16).padStart(8, '0') + ' bufLen=' + compositorRxBuffer.length + ' — stream may be corrupted');
         compositorRxBuffer = compositorRxBuffer.slice(1);

@@ -48,6 +48,7 @@ pub const MAGIC_FORWARD_RELATIVE_POINTER: u32 = 0x574F5245; // "WORE"
 pub const MAGIC_FORWARD_POINTER_BUTTON: u32 = 0x574F5042; // "WOPB"
 pub const MAGIC_FORWARD_POINTER_SCROLL: u32 = 0x574F5053; // "WOPS"
 pub const MAGIC_POINTER_LOCK_REQUEST: u32 = 0x574F504C; // "WOPL" — server-to-client pointer lock request
+pub const MAGIC_ENV_UPDATE: u32 = 0x574F4555; // "WOEU" — environment variable update broadcast
 
 
 #[repr(C, packed)]
@@ -143,6 +144,8 @@ pub enum ElectronInputEvent {
     FocusChange { window_name: String, focused: bool },
     WindowMetadata { metadata: String },  // JSON payload
     PointerLockRequest { window_name: String, lock: bool },
+    /// Environment variable update (e.g. DISPLAY after XWayland is ready).
+    EnvUpdate { vars: String },
 }
 
 /// A bidirectional connection to an Electron client.
@@ -435,6 +438,14 @@ impl ElectronClientConnection {
                 buf[12..].copy_from_slice(name_bytes);
                 self.write_bytes(&buf)?;
             },
+            ElectronInputEvent::EnvUpdate { vars } => {
+                let var_bytes = vars.as_bytes();
+                let mut buf = vec![0u8; 8 + var_bytes.len()];
+                buf[0..4].copy_from_slice(&MAGIC_ENV_UPDATE.to_le_bytes());
+                buf[4..8].copy_from_slice(&(var_bytes.len() as u32).to_le_bytes());
+                buf[8..].copy_from_slice(var_bytes);
+                self.write_bytes(&buf)?;
+            },
         }
         Ok(())
     }
@@ -500,6 +511,14 @@ impl ElectronClientConnection {
                 buf[4..8].copy_from_slice(&(name_bytes.len() as u32).to_le_bytes());
                 buf[8..12].copy_from_slice(&(*lock as u32).to_le_bytes());
                 buf[12..].copy_from_slice(name_bytes);
+                self.write_bytes_nonblocking(&buf)
+            }
+            ElectronInputEvent::EnvUpdate { vars } => {
+                let var_bytes = vars.as_bytes();
+                let mut buf = vec![0u8; 8 + var_bytes.len()];
+                buf[0..4].copy_from_slice(&MAGIC_ENV_UPDATE.to_le_bytes());
+                buf[4..8].copy_from_slice(&(var_bytes.len() as u32).to_le_bytes());
+                buf[8..].copy_from_slice(var_bytes);
                 self.write_bytes_nonblocking(&buf)
             }
         }
@@ -662,6 +681,24 @@ impl ElectronIpc {
         for client in &snapshot {
             if let Err(e) = client.try_send_input_event(&event) {
                 warn!("metadata broadcast to '{}' failed (stream may be corrupted): {e:#}", client.name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Broadcast environment variable updates to all connected Electron clients.
+    /// `vars` is a JSON object like `{"DISPLAY":":0"}`.
+    pub fn broadcast_env_update(&self, vars: &str) -> Result<()> {
+        let snapshot: Vec<_> = {
+            let clients = self.clients.lock().unwrap();
+            clients.values().cloned().collect()
+        };
+        let event = ElectronInputEvent::EnvUpdate {
+            vars: vars.to_string(),
+        };
+        for client in &snapshot {
+            if let Err(e) = client.try_send_input_event(&event) {
+                warn!("env update broadcast to '{}' failed: {e:#}", client.name);
             }
         }
         Ok(())

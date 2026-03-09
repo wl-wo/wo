@@ -228,33 +228,7 @@ impl WoState {
             return;
         }
 
-        // In nested mode, pointer events are routed through Electron/comraw.
-        if self.electron_ipc.is_some() {
-            let under_window =
-                self.window_under((self.pointer_location.x, self.pointer_location.y));
-
-            if self.pointer_window_focus != under_window {
-                self.pointer_window_focus = under_window.clone();
-            }
-
-            if let Some(ref win_name) = under_window {
-                if let Some(ref ipc) = self.electron_ipc {
-                    if let Some(local) = self.local_window_coords(
-                        win_name,
-                        (self.pointer_location.x, self.pointer_location.y),
-                    ) {
-                        if let Some(client) = ipc.clients.lock().unwrap().get(win_name).cloned() {
-                            // Non-blocking send.
-                            let _ = client.try_send_input_event(&ElectronInputEvent::MouseMove {
-                                x: local.0,
-                                y: local.1,
-                            });
-                        }
-                    }
-                }
-            }
-            return;
-        }
+        self.dispatch_pointer_to_targets(event.time_msec());
     }
 
     fn on_pointer_motion_abs<B: InputBackend>(&mut self, event: B::PointerMotionAbsoluteEvent) {
@@ -329,33 +303,90 @@ impl WoState {
             return;
         }
 
-        // In nested mode, pointer events are routed through Electron/comraw.
-        if self.electron_ipc.is_some() {
-            let under_window =
-                self.window_under((self.pointer_location.x, self.pointer_location.y));
+        self.dispatch_pointer_to_targets(event.time_msec());
+    }
 
-            if self.pointer_window_focus != under_window {
-                self.pointer_window_focus = under_window.clone();
-            }
+    /// Route the current pointer location to Electron windows (IPC) and/or
+    /// native Wayland/X11 windows (Smithay pointer.motion). Called from both
+    /// relative and absolute pointer motion handlers.
+    fn dispatch_pointer_to_targets(&mut self, time: u32) {
+        use smithay::{
+            desktop::WindowSurfaceType,
+            input::pointer::MotionEvent,
+            utils::{Logical, Point},
+        };
 
-            if let Some(ref win_name) = under_window {
-                if let Some(ref ipc) = self.electron_ipc {
-                    if let Some(local) = self.local_window_coords(
-                        win_name,
-                        (self.pointer_location.x, self.pointer_location.y),
-                    ) {
-                        let client = ipc.clients.lock().unwrap().get(win_name).cloned();
-                        if let Some(client) = client {
-                            let _ = client.try_send_input_event(&ElectronInputEvent::MouseMove {
-                                x: local.0,
-                                y: local.1,
-                            });
-                        }
+        let pos = (self.pointer_location.x, self.pointer_location.y);
+
+        // Route to Electron-managed window if cursor is over one
+        let under_electron = self.window_under(pos);
+        if self.pointer_window_focus != under_electron {
+            self.pointer_window_focus = under_electron.clone();
+        }
+        if let Some(ref win_name) = under_electron {
+            if let Some(ref ipc) = self.electron_ipc {
+                if let Some(local) = self.local_window_coords(win_name, pos) {
+                    if let Some(client) = ipc.clients.lock().unwrap().get(win_name).cloned() {
+                        let _ = client.try_send_input_event(&ElectronInputEvent::MouseMove {
+                            x: local.0,
+                            y: local.1,
+                        });
                     }
                 }
             }
+        }
+
+        let pointer = match self.seat.get_pointer() {
+            Some(p) => p,
+            None => return,
+        };
+        let serial = SERIAL_COUNTER.next_serial();
+
+        // When the cursor is over an Electron-managed window, the compositor
+        // must NOT touch Smithay's pointer state at all.  Electron/comraw owns
+        // the cursor: it renders the cursor sprite, tracks position inside its
+        // canvas, and — when the cursor is over an embedded native Wayland/X11
+        // window — sends a ForwardedPointer IPC back to the compositor.  That
+        // forwarded path (handle_forwarded_pointer_event) is the ONLY code that
+        // should call pointer.motion() for native windows.
+        //
+        // Previously this block called pointer.motion(None) to "clear" native
+        // focus, but Smithay interprets that as a real motion event and sends
+        // wl_pointer.leave to any focused client.  When Electron's forwarded
+        // event arrives a moment later and calls pointer.motion(Some(focus)),
+        // Smithay sends wl_pointer.enter — so the client sees
+        // leave→enter→leave→enter every frame, causing cursor rubberbanding.
+        if under_electron.is_some() && self.electron_ipc.is_some() {
             return;
         }
+
+        // Not over an Electron window — dispatch directly to native windows.
+        let pos_logical: Point<f64, Logical> = self.pointer_location;
+        let under_native = self.space.element_under(pos_logical);
+        let focus = under_native.and_then(|(window, _loc)| {
+            let win_loc = self.space.element_location(&window)?;
+            let local_x = self.pointer_location.x - win_loc.x as f64;
+            let local_y = self.pointer_location.y - win_loc.y as f64;
+            window
+                .surface_under(Point::<f64, Logical>::from((local_x, local_y)), WindowSurfaceType::ALL)
+                .map(|(s, offset)| {
+                    let surface_global: Point<f64, Logical> = (
+                        win_loc.x as f64 + offset.x as f64,
+                        win_loc.y as f64 + offset.y as f64,
+                    ).into();
+                    (s, surface_global)
+                })
+        });
+        pointer.motion(
+            self,
+            focus,
+            &MotionEvent {
+                location: self.pointer_location,
+                serial,
+                time,
+            },
+        );
+        pointer.frame(self);
     }
 
     fn on_pointer_button<B: InputBackend>(&mut self, event: B::PointerButtonEvent) {
@@ -488,10 +519,13 @@ impl WoState {
             Some(w) => w,
             None => return,
         };
-        let win_loc = self.space.element_location(&window).unwrap_or_default();
-        let global_x = win_loc.x as f64 + x;
-        let global_y = win_loc.y as f64 + y;
-        self.pointer_location = (global_x, global_y).into();
+
+        // Do NOT overwrite self.pointer_location here.  The hardware input
+        // handler (on_pointer_motion / on_pointer_motion_abs) already set it
+        // to the authoritative screen position.  Recomputing it from
+        // element_location + geo offsets uses a different coordinate system
+        // and causes the position to ping-pong between the hardware value
+        // and the recomputed value, producing visible rubberbanding.
 
         let pointer = match self.seat.get_pointer() {
             Some(p) => p,

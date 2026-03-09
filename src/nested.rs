@@ -179,7 +179,7 @@ pub fn run_nested(config: Config) -> Result<()> {
         std::iter::empty::<(String, String)>(),
         true, // open abstract socket for X11 compatibility
         std::process::Stdio::null(),
-        std::process::Stdio::null(),
+        std::process::Stdio::inherit(),
         |_| {}, // no extra user data
     ) {
         Ok((xwayland, xw_client)) => {
@@ -196,6 +196,14 @@ pub fn run_nested(config: Config) -> Result<()> {
                         } => {
                             info!("XWayland ready on DISPLAY :{display_number}");
                             std::env::set_var("DISPLAY", format!(":{display_number}"));
+                            crate::state::propagate_environment(&["DISPLAY", "WAYLAND_DISPLAY"]);
+                            // Broadcast DISPLAY to already-running Electron clients
+                            if let Some(ref ipc) = state.electron_ipc {
+                                let vars = format!("{{\"DISPLAY\":\":{display_number}\"}}");
+                                if let Err(e) = ipc.broadcast_env_update(&vars) {
+                                    warn!("Failed to broadcast DISPLAY to Electron: {e:#}");
+                                }
+                            }
                             if let Some(client) = xw_client_cb.borrow_mut().take() {
                                 match X11Wm::start_wm(wm_handle.clone(), x11_socket, client) {
                                     Ok(wm) => {
@@ -224,6 +232,7 @@ pub fn run_nested(config: Config) -> Result<()> {
 
     std::env::set_var("WAYLAND_DISPLAY", &config.compositor.socket_name);
     info!("Set WAYLAND_DISPLAY={}", config.compositor.socket_name);
+    crate::state::propagate_environment(&["WAYLAND_DISPLAY"]);
 
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("electron");
     // Nested mode has no DRM card; use the first available render node.
@@ -1351,12 +1360,10 @@ fn process_electron_message(
                                     let surface_x = px;
                                     let surface_y = py;
 
-                                    let global: Point<f64, Logical> = (
-                                        loc.x as f64 - geo.loc.x.max(0) as f64 + surface_x,
-                                        loc.y as f64 - geo.loc.y.max(0) as f64 + surface_y,
-                                    )
-                                        .into();
-                                    state.pointer_location = global;
+                                    // Do NOT overwrite state.pointer_location.
+                                    // The hardware input handler already set it
+                                    // to the authoritative position; recomputing
+                                    // from element_location + geo causes ping-pong.
                                     let under = window.surface_under(
                                         (surface_x, surface_y),
                                         smithay::desktop::WindowSurfaceType::ALL,
@@ -1376,7 +1383,7 @@ fn process_electron_message(
                                             state,
                                             focus,
                                             &smithay::input::pointer::MotionEvent {
-                                                location: global,
+                                                location: state.pointer_location,
                                                 serial,
                                                 time,
                                             },
@@ -1415,12 +1422,8 @@ fn process_electron_message(
                                     let surface_x = px;
                                     let surface_y = py;
 
-                                    let global: Point<f64, Logical> = (
-                                        loc.x as f64 - geo.loc.x.max(0) as f64 + surface_x,
-                                        loc.y as f64 - geo.loc.y.max(0) as f64 + surface_y,
-                                    )
-                                        .into();
-                                    state.pointer_location = global;
+                                    // Do NOT overwrite state.pointer_location
+                                    // (same rationale as pointer_motion above).
                                     if pressed {
                                         let surface = window
                                             .toplevel()

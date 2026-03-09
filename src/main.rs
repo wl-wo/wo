@@ -648,16 +648,22 @@ fn render_frame(data: &mut EventLoopData) {
             );
         }
 
-        for element in wayland_elements {
-            let src = element.src();
-            let dst = element.geometry(scale);
-            if let Err(e) = element.draw(&mut frame, src, dst, &[data.output_rect], &[]) {
-                if is_egl_context_or_surface_lost(&e.to_string()) {
-                    error!("EGL context lost during space rendering");
-                    context_lost = true;
-                    return false;
+        // Wayland window surfaces are exported to Electron clients via
+        // DMABUF/SHM passthrough (below), not rendered directly to the DRM
+        // framebuffer. Only render them directly when there is no Electron IPC
+        // (i.e. pure compositor mode without a shell).
+        if data.state.electron_ipc.is_none() {
+            for element in wayland_elements {
+                let src = element.src();
+                let dst = element.geometry(scale);
+                if let Err(e) = element.draw(&mut frame, src, dst, &[data.output_rect], &[]) {
+                    if is_egl_context_or_surface_lost(&e.to_string()) {
+                        error!("EGL context lost during space rendering");
+                        context_lost = true;
+                        return false;
+                    }
+                    trace!("Element rendering failed: {e}");
                 }
-                trace!("Element rendering failed: {e}");
             }
         }
 
@@ -702,14 +708,109 @@ fn render_frame(data: &mut EventLoopData) {
         }
 
         let dirty_surfaces: Vec<_> = data.state.dirty_surfaces.drain().collect();
-        for surface in dirty_surfaces {
+        for surface in &dirty_surfaces {
             smithay::desktop::utils::send_frames_surface_tree(
-                &surface,
+                surface,
                 &data.state.backend.output,
                 presented_at,
                 Some(data.frame_time),
                 |_, _| Some(data.state.backend.output.clone()),
             );
+        }
+
+        // Export dirty Wayland surfaces to Electron clients via DMABUF/SHM
+        if data.state.electron_ipc.is_some() {
+            use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+            use smithay::reexports::wayland_server::Resource;
+            use smithay::wayland::compositor::with_states;
+            use smithay::wayland::shm::with_buffer_contents;
+            use tracing::debug;
+
+            let mut exported_pixels: Vec<(String, u32, u32, u32, Vec<u8>)> = Vec::new();
+
+            for surface in &dirty_surfaces {
+                let surface_id = surface.id();
+                let (window_name, window_geo) = if let Some(n) =
+                    data.state.wayland_window_names.get(&surface_id).cloned()
+                {
+                    let sid = surface_id.clone();
+                    let geo = data.state.space.elements().find_map(|w| {
+                        let wl_id = w.toplevel()
+                            .map(|t| t.wl_surface().id())
+                            .or_else(|| w.x11_surface().and_then(|x| x.wl_surface().map(|s| s.id())));
+                        if wl_id == Some(sid.clone()) {
+                            data.state.space.element_geometry(w)
+                        } else {
+                            None
+                        }
+                    });
+                    (n, geo)
+                } else {
+                    let sid = surface_id.clone();
+                    let x11_result = data.state.space.elements().find_map(|w| {
+                        let x11 = w.x11_surface()?;
+                        let wl = x11.wl_surface()?;
+                        if wl.id() == sid.clone() {
+                            let name = data.state.x11_window_names.get(&x11.window_id()).cloned()?;
+                            let geo = data.state.space.element_geometry(w);
+                            Some((name, geo))
+                        } else {
+                            None
+                        }
+                    });
+                    match x11_result {
+                        Some((n, geo)) => (n, geo),
+                        None => continue,
+                    }
+                };
+
+                let Some(_geo) = window_geo else { continue };
+
+                // Try SHM buffer first (software-rendered clients)
+                let pixels_opt: Option<(u32, u32, u32, Vec<u8>)> =
+                    with_states(surface, |states| {
+                        let rss_data = states.data_map.get::<RendererSurfaceStateUserData>()?;
+                        let rss = rss_data.lock().ok()?;
+                        let buffer = rss.buffer()?;
+
+                        let mut result: Option<(u32, u32, u32, Vec<u8>)> = None;
+                        let _ = with_buffer_contents(buffer, |ptr, len, spec| {
+                            let pixel_bytes =
+                                (spec.stride.max(0) * spec.height.max(0)) as usize;
+                            if pixel_bytes > 0 && pixel_bytes <= len {
+                                let slice =
+                                    unsafe { std::slice::from_raw_parts(ptr, pixel_bytes) };
+                                result = Some((
+                                    spec.width as u32,
+                                    spec.height as u32,
+                                    spec.stride as u32,
+                                    slice.to_vec(),
+                                ));
+                            }
+                        });
+                        result
+                    });
+
+                if let Some((bw, bh, stride, pixels)) = pixels_opt {
+                    exported_pixels.push((window_name, bw, bh, stride, pixels));
+                } else if let Some(ref ipc) = data.state.electron_ipc {
+                    // Try DMABUF (hardware-rendered clients / games)
+                    let dmabuf_opt = with_states(surface, |states| {
+                        let rss_data = states.data_map.get::<RendererSurfaceStateUserData>()?;
+                        let rss = rss_data.lock().ok()?;
+                        let buffer = rss.buffer()?;
+                        smithay::wayland::dmabuf::get_dmabuf(buffer).ok().cloned()
+                    });
+
+                    if let Some(dmabuf) = dmabuf_opt {
+                        if let Err(e) = ipc.broadcast_dmabuf_frame(&window_name, &dmabuf) {
+                            debug!("DRM dmabuf broadcast failed for {}: {}", window_name, e);
+                        }
+                    }
+                }
+            }
+
+            data.state.pending_shm_exports = exported_pixels;
         }
 
         // Send frame callbacks for the cursor surface so the client keeps
@@ -765,6 +866,51 @@ fn render_frame(data: &mut EventLoopData) {
 
     data.state.damaged_windows.clear();
     data.state.dirty_surfaces.clear();
+
+    // Write exported SHM pixel buffers to memfd and broadcast to Electron
+    {
+        use std::os::unix::io::AsRawFd;
+        use nix::sys::memfd::MFdFlags;
+        use tracing::debug;
+
+        let exports = std::mem::take(&mut data.state.pending_shm_exports);
+        for (window_name, w, h, stride, pixels) in exports {
+            let memfd_fd = data.state
+                .window_shm_buffers
+                .entry(window_name.clone())
+                .or_insert_with(|| {
+                    nix::sys::memfd::memfd_create(
+                        std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
+                        MFdFlags::MFD_CLOEXEC,
+                    )
+                    .expect("creating memfd")
+                });
+
+            let size = pixels.len() as i64;
+            let stat = nix::sys::stat::fstat(&*memfd_fd).unwrap();
+            if stat.st_size != size {
+                nix::unistd::ftruncate(&*memfd_fd, size).expect("truncating memfd");
+            }
+
+            nix::unistd::lseek(&*memfd_fd, 0, nix::unistd::Whence::SeekSet)
+                .expect("seeking memfd");
+            nix::unistd::write(&*memfd_fd, &pixels).expect("writing to memfd");
+
+            if let Some(ref ipc) = data.state.electron_ipc {
+                let pid = std::process::id();
+                if let Err(e) = ipc.broadcast_shm_buffer(
+                    &window_name,
+                    w,
+                    h,
+                    stride,
+                    pid,
+                    memfd_fd.as_raw_fd() as i32,
+                ) {
+                    debug!("DRM shm buffer broadcast failed for {}: {}", window_name, e);
+                }
+            }
+        }
+    }
 
     // Get or create the DRM framebuffer for this slot.
     // Caching in the slot's userdata avoids a create/destroy cycle every
@@ -1288,7 +1434,7 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         std::iter::empty::<(String, String)>(),
         true,
         std::process::Stdio::null(),
-        std::process::Stdio::null(),
+        std::process::Stdio::inherit(),
         |_| {},
     ) {
         Ok((xwayland, xw_client)) => {
@@ -1306,6 +1452,14 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
                         } => {
                             info!("XWayland ready on DISPLAY :{display_number}");
                             std::env::set_var("DISPLAY", format!(":{display_number}"));
+                            crate::state::propagate_environment(&["DISPLAY", "WAYLAND_DISPLAY"]);
+                            // Broadcast DISPLAY to already-running Electron clients
+                            if let Some(ref ipc) = data.state.electron_ipc {
+                                let vars = format!("{{\"DISPLAY\":\":{display_number}\"}}");
+                                if let Err(e) = ipc.broadcast_env_update(&vars) {
+                                    warn!("Failed to broadcast DISPLAY to Electron: {e:#}");
+                                }
+                            }
                             if let Some(client) = xw_client_cb.borrow_mut().take() {
                                 match X11Wm::start_wm(wm_handle.clone(), x11_socket, client) {
                                     Ok(wm) => {
@@ -1333,6 +1487,8 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     }
 
     std::env::set_var("WAYLAND_DISPLAY", &config.compositor.socket_name);
+    // Propagate now; DISPLAY will be re-propagated once XWayland is ready.
+    crate::state::propagate_environment(&["WAYLAND_DISPLAY"]);
 
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("electron");
     let electron_render_node = render_node_for_card(&gpu_path);
@@ -2057,11 +2213,22 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
             // Execute any due autostart tasks (scheduled at startup)
             if !data.autostart_tasks.is_empty() {
                 let now = std::time::Instant::now();
+                let display_ready = std::env::var("DISPLAY").is_ok();
                 let mut pending: Vec<(crate::config::AutostartConfig, std::time::Instant)> =
                     Vec::new();
                 for (task, when) in data.autostart_tasks.drain(..) {
                     if when <= now {
                         let cmd = task.command.clone();
+
+                        // Defer non-builtin commands until DISPLAY is set
+                        // (XWayland ready). X11 apps like Steam need it.
+                        if !display_ready
+                            && !cmd.starts_with("wo://")
+                        {
+                            pending.push((task, now + std::time::Duration::from_millis(200)));
+                            continue;
+                        }
+
                         // Handle simple wo://window/<name> built-in action
                         if let Some(name) = cmd.strip_prefix("wo://window/") {
                             if let Some(win_cfg) =

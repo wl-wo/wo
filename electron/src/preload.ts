@@ -91,6 +91,14 @@ const compositorAPI: CompositorAPI = {
     return () => ipcRenderer.removeListener('wo:pointer-lock-request', handler);
   },
 
+  // Environment variable updates from compositor (e.g. DISPLAY after XWayland ready)
+  onEnvUpdate: (callback: (vars: Record<string, string>) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, vars: Record<string, string>) =>
+      callback(vars);
+    ipcRenderer.on('wo:env-update', handler);
+    return () => ipcRenderer.removeListener('wo:env-update', handler);
+  },
+
   // Generic portal request event for client-provided popup/approval handlers
   onPortalRequest: (callback: (data: {
     requestId: string;
