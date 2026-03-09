@@ -12,7 +12,7 @@ use anyhow::Context;
 use calloop::EventLoop;
 use gbm::Modifier;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use smithay::backend::allocator::Fourcc;
+use smithay::backend::allocator::{Fourcc, Slot};
 
 use smithay::backend::renderer::element::{Element, RenderElement};
 use smithay::wayland::xdg_activation::{XdgActivationToken, XdgActivationTokenData};
@@ -93,6 +93,10 @@ struct EventLoopData {
     electron_render_node: String,
     /// Total successful page flips (for startup diagnostics).
     total_flips: u64,
+    /// Hold the currently-displayed swapchain slot so the GBM BO is not
+    /// recycled while the CRTC is still scanning it out. Released when
+    /// the next frame is submitted.
+    current_slot: Option<Slot<smithay::backend::allocator::gbm::GbmBuffer>>,
 }
 
 const MAX_CONSECUTIVE_FLIP_FAILURES: u32 = 5;
@@ -465,8 +469,11 @@ fn render_frame(data: &mut EventLoopData) {
             return false;
         }
 
-        // Render Electron window textures
-        for win_cfg in &data.state.config.windows {
+        // Render Electron window textures sorted by z_order (lowest first)
+        let mut sorted_windows: Vec<_> = data.state.config.windows.iter().collect();
+        sorted_windows.sort_by_key(|w| w.z_order);
+
+        for win_cfg in sorted_windows {
             if let Some(texture) = data.gles_tex_cache.get(&win_cfg.name) {
                 let (x, y, _w, _h) = data.state
                     .window_positions
@@ -609,6 +616,10 @@ fn render_frame(data: &mut EventLoopData) {
             data.consecutive_flip_failures = 0;
             data.vblank_pending = true;
             data.vblank_since = Some(Instant::now());
+            data.swapchain.submitted(&slot);
+            // Hold the slot so its GBM BO is not recycled while the CRTC
+            // scans it out. The previous slot (if any) is released here.
+            data.current_slot = Some(slot);
             data.total_flips += 1;
             if data.total_flips == 1 {
                 info!("First successful page flip (commit_pending={})", commit_pending);
@@ -652,18 +663,18 @@ fn render_frame(data: &mut EventLoopData) {
                     write_flip_failure_report(&report);
                     data.active = false;
                     data.state.running = false;
-                    data.swapchain.submitted(&slot);
                     return;
                 }
             } else {
                 data.consecutive_flip_failures = 0;
                 data.vblank_pending = true;
                 data.vblank_since = Some(Instant::now());
+                data.swapchain.submitted(&slot);
+                data.current_slot = Some(slot);
                 data.total_flips += 1;
             }
         }
     }
-    data.swapchain.submitted(&slot);
 }
 
 fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
@@ -1176,6 +1187,7 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         gles_tex_cache: std::collections::HashMap::new(),
         electron_render_node: electron_render_node,
         total_flips: 0,
+        current_slot: None,
     };
 
     let signal_for_handler = loop_signal.clone();
@@ -1616,14 +1628,12 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
                                                 let (ow, oh) = (data.state.output_size.0 as i32, data.state.output_size.1 as i32);
                                                 let y_offset = th.max(PANEL_H);
                                                 let content_h = (oh - y_offset).max(1);
-                                                let (cw, ch) = data.state.clamp_to_size_hints(&window, ow, content_h);
-                                                let x_offset = ((ow - cw) / 2).max(0);
                                                 toplevel.with_pending_state(|s| {
                                                     s.states.set(XdgState::Maximized);
-                                                    s.size = Some((cw, ch).into());
+                                                    s.size = Some((ow, content_h).into());
                                                 });
                                                 toplevel.send_configure();
-                                                data.state.space.map_element(window.clone(), (x_offset, y_offset), false);
+                                                data.state.space.map_element(window.clone(), (0, y_offset), false);
                                             }
                                         }
                                         "pointer_motion" => {
@@ -1657,6 +1667,38 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
                                                     time: 0,
                                                 });
                                                 pointer.frame(&mut data.state);
+                                            }
+                                        }
+                                        "keyboard_key" => {
+                                            let keycode = payload_json
+                                                .as_ref()
+                                                .and_then(|p| p.get("keycode"))
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0) as u32;
+                                            let pressed = payload_json
+                                                .as_ref()
+                                                .and_then(|p| p.get("pressed"))
+                                                .and_then(|v| v.as_bool())
+                                                .unwrap_or(false);
+                                            let key_state = if pressed {
+                                                smithay::backend::input::KeyState::Pressed
+                                            } else {
+                                                smithay::backend::input::KeyState::Released
+                                            };
+                                            let xkb_keycode: u32 = keycode + 8;
+                                            let time = std::time::Instant::now()
+                                                .duration_since(data.last_render)
+                                                .as_millis() as u32;
+                                            if let Some(keyboard) = data.state.seat.get_keyboard() {
+                                                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                                                keyboard.input::<(), _>(
+                                                    &mut data.state,
+                                                    xkb_keycode.into(),
+                                                    key_state,
+                                                    serial,
+                                                    time,
+                                                    |_, _, _| smithay::input::keyboard::FilterResult::Forward,
+                                                );
                                             }
                                         }
                                         _ => {}
