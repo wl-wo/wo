@@ -612,6 +612,19 @@ pub fn run_nested(config: Config) -> Result<()> {
                     Vec::new()
                 };
 
+            // Load themed cursor texture for Named cursor status
+            let themed_cursor = if let smithay::input::pointer::CursorImageStatus::Named(ref icon) = state.cursor_status {
+                state.cursor_theme_manager.get_cursor(icon.name(), renderer).cloned()
+            } else if cursor_elements.is_empty() {
+                if !matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden) {
+                    state.cursor_theme_manager.get_cursor("default", renderer).cloned()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // Wayland windows are exclusively rendered by comraw via off-screen buffers.
             // The native space.elements() rendering pass has been removed here.
 
@@ -675,13 +688,31 @@ pub fn run_nested(config: Config) -> Result<()> {
             // allowing the client to fully control window compositing and layout.
 
             // Render cursor on top of everything
-            for element in &cursor_elements {
-                use smithay::utils::Scale as ScaleF;
-                let scale = ScaleF::from(1.0);
-                let src = element.src();
-                let dst = element.geometry(scale);
-                if let Err(e) = element.draw(&mut frame, src, dst, &[output_rect], &[]) {
-                    trace!("Failed to render cursor element: {}", e);
+            if !cursor_elements.is_empty() {
+                for element in &cursor_elements {
+                    use smithay::utils::Scale as ScaleF;
+                    let scale = ScaleF::from(1.0);
+                    let src = element.src();
+                    let dst = element.geometry(scale);
+                    if let Err(e) = element.draw(&mut frame, src, dst, &[output_rect], &[]) {
+                        trace!("Failed to render cursor element: {}", e);
+                    }
+                }
+            } else if let Some(ref cur) = themed_cursor {
+                use smithay::backend::renderer::Frame as _;
+                let cx = state.pointer_location.x as i32 - cur.xhot as i32;
+                let cy = state.pointer_location.y as i32 - cur.yhot as i32;
+                if let Err(e) = frame.render_texture_at(
+                    &cur.texture,
+                    (cx, cy).into(),
+                    1,
+                    1.0,
+                    Transform::Normal,
+                    &[output_rect],
+                    &[],
+                    1.0,
+                ) {
+                    trace!("Failed to render themed cursor: {}", e);
                 }
             }
 

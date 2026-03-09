@@ -85,6 +85,13 @@ impl WoState {
         // the XKB offset before forwarding.
         let evdev_key = u32::from(key_code).saturating_sub(8);
 
+        // Check if a client is inhibiting compositor keyboard shortcuts
+        // (e.g. fullscreen games requesting all key events).
+        let shortcuts_inhibited = {
+            use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat;
+            self.seat.keyboard_shortcuts_inhibited()
+        };
+
         // Use non-blocking send to avoid input stalls.
         let wayland_has_focus = self
             .seat
@@ -116,6 +123,12 @@ impl WoState {
             serial,
             time,
             |state, modifiers, _handle| {
+                // When keyboard shortcuts are inhibited, forward all keys to the
+                // focused client without intercepting compositor shortcuts.
+                if shortcuts_inhibited {
+                    return FilterResult::Forward;
+                }
+
                 if press && state.can_switch_vt {
                     if let Some(vt) = evdev_function_key_to_vt(evdev_key) {
                         // Accept Ctrl+Alt+Fn and Meta+Alt+Fn.

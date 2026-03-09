@@ -2,6 +2,7 @@
 
 mod backend;
 mod config;
+mod cursor;
 mod dmabuf;
 mod electron;
 mod handlers;
@@ -24,7 +25,7 @@ use smithay::{
             Swapchain,
         },
         drm::{
-            gbm::framebuffer_from_bo, DrmDevice, DrmDeviceFd, DrmNode, PlaneConfig,
+            gbm::{framebuffer_from_bo, GbmFramebuffer}, DrmDevice, DrmDeviceFd, DrmNode, PlaneConfig,
             PlaneState,
         },
         egl::{EGLContext, EGLDisplay},
@@ -42,7 +43,9 @@ use smithay::{
     utils::{Buffer, DeviceFd, Physical, Rectangle, Transform},
     wayland::{
         xdg_activation::XdgActivationHandler,
+        xwayland_shell::XWaylandShellState,
     },
+    xwayland::{xwm::X11Wm, XWayland, XWaylandEvent},
 };
 use std::path::Path;
 use std::{
@@ -100,6 +103,99 @@ struct EventLoopData {
     /// confirmation. Without this, the CRTC's active scanout buffer could be
     /// freed prematurely, causing every-other-frame flicker.
     pending_slot: Option<Slot<smithay::backend::allocator::gbm::GbmBuffer>>,
+}
+
+/// Newtype wrapper around `Option<EventLoopData>` for the DRM calloop event
+/// loop. The `Option` is needed because the event loop is created before the
+/// DRM resources are fully initialized (`None` during pre-init, `Some` after).
+/// The newtype allows implementing XWayland traits (orphan rules forbid impls
+/// on `Option<T>` directly).
+struct DrmLoopData(Option<EventLoopData>);
+
+impl std::ops::Deref for DrmLoopData {
+    type Target = Option<EventLoopData>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+impl std::ops::DerefMut for DrmLoopData {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+
+// XwmHandler delegation so X11Wm calloop sources work on the DRM event loop.
+impl smithay::xwayland::xwm::XwmHandler for DrmLoopData {
+    fn xwm_state(&mut self, xwm: smithay::xwayland::xwm::XwmId) -> &mut X11Wm {
+        self.0.as_mut().expect("EventLoopData initialized").state.xwm_state(xwm)
+    }
+    fn new_window(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.new_window(xwm, window)
+    }
+    fn new_override_redirect_window(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.new_override_redirect_window(xwm, window)
+    }
+    fn map_window_request(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.map_window_request(xwm, window)
+    }
+    fn mapped_override_redirect_window(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.mapped_override_redirect_window(xwm, window)
+    }
+    fn unmapped_window(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.unmapped_window(xwm, window)
+    }
+    fn destroyed_window(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.destroyed_window(xwm, window)
+    }
+    fn configure_request(
+        &mut self,
+        xwm: smithay::xwayland::xwm::XwmId,
+        window: smithay::xwayland::xwm::X11Surface,
+        x: Option<i32>,
+        y: Option<i32>,
+        w: Option<u32>,
+        h: Option<u32>,
+        reorder: Option<smithay::xwayland::xwm::Reorder>,
+    ) {
+        self.0.as_mut().expect("EventLoopData initialized").state.configure_request(xwm, window, x, y, w, h, reorder)
+    }
+    fn configure_notify(
+        &mut self,
+        xwm: smithay::xwayland::xwm::XwmId,
+        window: smithay::xwayland::xwm::X11Surface,
+        geometry: smithay::utils::Rectangle<i32, smithay::utils::Logical>,
+        above: Option<smithay::xwayland::xwm::X11Window>,
+    ) {
+        self.0.as_mut().expect("EventLoopData initialized").state.configure_notify(xwm, window, geometry, above)
+    }
+    fn resize_request(
+        &mut self,
+        xwm: smithay::xwayland::xwm::XwmId,
+        window: smithay::xwayland::xwm::X11Surface,
+        button: u32,
+        resize_edge: smithay::xwayland::xwm::ResizeEdge,
+    ) {
+        self.0.as_mut().expect("EventLoopData initialized").state.resize_request(xwm, window, button, resize_edge)
+    }
+    fn move_request(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface, button: u32) {
+        self.0.as_mut().expect("EventLoopData initialized").state.move_request(xwm, window, button)
+    }
+    fn fullscreen_request(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.fullscreen_request(xwm, window)
+    }
+    fn unfullscreen_request(&mut self, xwm: smithay::xwayland::xwm::XwmId, window: smithay::xwayland::xwm::X11Surface) {
+        self.0.as_mut().expect("EventLoopData initialized").state.unfullscreen_request(xwm, window)
+    }
+}
+
+impl smithay::wayland::xwayland_shell::XWaylandShellHandler for DrmLoopData {
+    fn xwayland_shell_state(&mut self) -> &mut smithay::wayland::xwayland_shell::XWaylandShellState {
+        self.0.as_mut().expect("EventLoopData initialized").state.xwayland_shell_state()
+    }
+    fn surface_associated(
+        &mut self,
+        xwm: smithay::xwayland::xwm::XwmId,
+        wl_surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        window: smithay::xwayland::xwm::X11Surface,
+    ) {
+        self.0.as_mut().expect("EventLoopData initialized").state.surface_associated(xwm, wl_surface, window)
+    }
 }
 
 const MAX_CONSECUTIVE_FLIP_FAILURES: u32 = 5;
@@ -448,6 +544,35 @@ fn render_frame(data: &mut EventLoopData) {
             }
         }
 
+        // Prepare cursor elements from the cursor surface (set by Wayland clients)
+        let cursor_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+            if let smithay::input::pointer::CursorImageStatus::Surface(ref cursor_surface) = data.state.cursor_status {
+                render_elements_from_surface_tree(
+                    renderer,
+                    cursor_surface,
+                    (data.state.pointer_location.x as i32, data.state.pointer_location.y as i32),
+                    scale,
+                    1.0,
+                    Kind::Cursor,
+                )
+            } else {
+                Vec::new()
+            };
+
+        // Load themed cursor texture for Named cursor status
+        let themed_cursor = if let smithay::input::pointer::CursorImageStatus::Named(ref icon) = data.state.cursor_status {
+            data.state.cursor_theme_manager.get_cursor(icon.name(), renderer).cloned()
+        } else if cursor_elements.is_empty() {
+            // No client surface and not Hidden — use default theme cursor as fallback
+            if !matches!(data.state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden) {
+                data.state.cursor_theme_manager.get_cursor("default", renderer).cloned()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let mut target = match renderer.bind(&mut target_dmabuf) {
             Ok(t) => t,
             Err(e) => {
@@ -477,6 +602,7 @@ fn render_frame(data: &mut EventLoopData) {
         let mut sorted_windows: Vec<_> = data.state.config.windows.iter().collect();
         sorted_windows.sort_by_key(|w| w.z_order);
 
+        let mut rendered_tex_count = 0u32;
         for win_cfg in sorted_windows {
             if let Some(texture) = data.gles_tex_cache.get(&win_cfg.name) {
                 let (x, y, _w, _h) = data.state
@@ -506,8 +632,20 @@ fn render_frame(data: &mut EventLoopData) {
                         return false;
                     }
                     warn!("Electron texture rendering failed for {}: {e}", win_cfg.name);
+                } else {
+                    rendered_tex_count += 1;
                 }
             }
+        }
+
+        // Log every frame for first 60 frames to diagnose flickering
+        if data.total_flips < 60 {
+            info!(
+                "render_frame #{}: textures_rendered={}, gles_cache={}, windows={}",
+                data.total_flips, rendered_tex_count,
+                data.gles_tex_cache.len(),
+                data.state.config.windows.len(),
+            );
         }
 
         for element in wayland_elements {
@@ -520,6 +658,32 @@ fn render_frame(data: &mut EventLoopData) {
                     return false;
                 }
                 trace!("Element rendering failed: {e}");
+            }
+        }
+
+        // Render cursor on top of everything
+        if !cursor_elements.is_empty() {
+            for element in &cursor_elements {
+                let src = element.src();
+                let dst = element.geometry(scale);
+                if let Err(e) = element.draw(&mut frame, src, dst, &[data.output_rect], &[]) {
+                    trace!("Failed to render cursor element: {e}");
+                }
+            }
+        } else if let Some(ref cur) = themed_cursor {
+            let cx = data.state.pointer_location.x as i32 - cur.xhot as i32;
+            let cy = data.state.pointer_location.y as i32 - cur.yhot as i32;
+            if let Err(e) = frame.render_texture_at(
+                &cur.texture,
+                (cx, cy).into(),
+                1,
+                1.0,
+                Transform::Normal,
+                &[data.output_rect],
+                &[],
+                1.0,
+            ) {
+                trace!("Failed to render themed cursor: {e}");
             }
         }
 
@@ -548,6 +712,18 @@ fn render_frame(data: &mut EventLoopData) {
             );
         }
 
+        // Send frame callbacks for the cursor surface so the client keeps
+        // animating it (e.g. spinning/loading cursors).
+        if let smithay::input::pointer::CursorImageStatus::Surface(ref cursor_surface) = data.state.cursor_status {
+            smithay::desktop::utils::send_frames_surface_tree(
+                cursor_surface,
+                &data.state.backend.output,
+                presented_at,
+                Some(data.frame_time),
+                |_, _| Some(data.state.backend.output.clone()),
+            );
+        }
+
         // Finalize the GL frame — flushes all rendering commands to the
         // framebuffer.  Without this, the GBM BO may contain stale or
         // incomplete pixel data, causing flicker.
@@ -562,6 +738,15 @@ fn render_frame(data: &mut EventLoopData) {
                 }
             }
         }
+
+        // Ensure all GPU work targeting this BO completes before the DRM
+        // subsystem starts scanning it out. glFlush (done by finish())
+        // only queues commands; glFinish blocks until they're done.
+        renderer.with_context(|gl| unsafe { gl.Finish() })
+            .unwrap_or_else(|e| warn!("glFinish failed: {e}"));
+
+        // Unbind the render target so the BO is no longer GL-locked.
+        drop(target);
 
         true
     })();
@@ -581,14 +766,28 @@ fn render_frame(data: &mut EventLoopData) {
     data.state.damaged_windows.clear();
     data.state.dirty_surfaces.clear();
 
-    // Create framebuffer and schedule page flip
-    let fb = match framebuffer_from_bo(&data.drm_device_fd, &slot, false) {
-        Ok(fb) => fb,
-        Err(e) => {
-            warn!("Error creating framebuffer: {e}");
-            data.swapchain.submitted(&slot);
-            return;
-        }
+    // Get or create the DRM framebuffer for this slot.
+    // Caching in the slot's userdata avoids a create/destroy cycle every
+    // frame and — critically — keeps the GbmFramebuffer alive through
+    // the page flip.  Previously the FB was dropped at the end of
+    // render_frame, calling drmModeRmFB while the flip was still pending.
+    // While the kernel holds an internal reference, some DRM drivers
+    // misbehave when the userspace handle is removed before the flip
+    // completes, causing every-other-frame flicker.
+    let fb_handle = if let Some(cached_fb) = slot.userdata().get::<GbmFramebuffer>() {
+        *cached_fb.as_ref()
+    } else {
+        let fb = match framebuffer_from_bo(&data.drm_device_fd, &slot, false) {
+            Ok(fb) => fb,
+            Err(e) => {
+                warn!("Error creating framebuffer: {e}");
+                data.swapchain.submitted(&slot);
+                return;
+            }
+        };
+        let handle = *fb.as_ref();
+        slot.userdata().insert_if_missing(move || fb);
+        handle
     };
 
     let plane_state = PlaneState {
@@ -599,7 +798,7 @@ fn render_frame(data: &mut EventLoopData) {
             transform: Transform::Normal,
             alpha: 1.0,
             damage_clips: None,
-            fb: *fb.as_ref(),
+            fb: fb_handle,
             fence: None,
         }),
     };
@@ -716,15 +915,15 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     // polls the libseat fd, seat.dispatch() is never called, the EnableSeat
     // message from seatd/logind stays unread, and libseat_open_device()
     // returns EAGAIN for every attempt.
-    let mut event_loop: EventLoop<Option<EventLoopData>> =
+    let mut event_loop: EventLoop<DrmLoopData> =
         EventLoop::try_new().context("creating event loop")?;
     let loop_handle = event_loop.handle();
     let loop_signal = event_loop.get_signal();
 
     loop_handle
-        .insert_source(session_notifier, |event, _, data: &mut Option<EventLoopData>| {
+        .insert_source(session_notifier, |event, _, data: &mut DrmLoopData| {
             use smithay::backend::session::Event;
-            let Some(data) = data.as_mut() else {
+            let Some(data) = data.0.as_mut() else {
                 // Pre-init phase: ActivateSession received before DRM setup is
                 // complete. The session is now active; device opening can proceed.
                 return;
@@ -768,7 +967,7 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     if !session.is_active() {
         info!("Waiting for seat activation (EnableSeat from seat manager)...");
     }
-    let mut pre_init: Option<EventLoopData> = None;
+    let mut pre_init = DrmLoopData(None);
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -1080,6 +1279,59 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
 
     state.electron_ipc = Some(ipc);
 
+    // Spawn XWayland for X11 client support (mirrors nested.rs)
+    state.xwayland_shell_state = Some(XWaylandShellState::new::<WoState>(&dh));
+
+    match XWayland::spawn(
+        &dh,
+        None,
+        std::iter::empty::<(String, String)>(),
+        true,
+        std::process::Stdio::null(),
+        std::process::Stdio::null(),
+        |_| {},
+    ) {
+        Ok((xwayland, xw_client)) => {
+            let wm_handle = loop_handle.clone();
+            let xw_client = std::rc::Rc::new(std::cell::RefCell::new(Some(xw_client)));
+            let xw_client_cb = xw_client.clone();
+
+            if let Err(e) =
+                loop_handle.insert_source(xwayland, move |event, _, drm_data: &mut DrmLoopData| {
+                    let data = drm_data.0.as_mut().expect("EventLoopData initialized");
+                    match event {
+                        XWaylandEvent::Ready {
+                            x11_socket,
+                            display_number,
+                        } => {
+                            info!("XWayland ready on DISPLAY :{display_number}");
+                            std::env::set_var("DISPLAY", format!(":{display_number}"));
+                            if let Some(client) = xw_client_cb.borrow_mut().take() {
+                                match X11Wm::start_wm(wm_handle.clone(), x11_socket, client) {
+                                    Ok(wm) => {
+                                        data.state.xwm = Some(wm);
+                                        info!("X11 window manager attached");
+                                    }
+                                    Err(e) => error!("X11Wm::start_wm failed: {e:#}"),
+                                }
+                            }
+                        }
+                        XWaylandEvent::Error => {
+                            warn!("XWayland server encountered an error during startup");
+                        }
+                    }
+                })
+            {
+                error!("Failed to register XWayland event source: {e:#}");
+            } else {
+                info!("XWayland server starting");
+            }
+        }
+        Err(e) => {
+            warn!("XWayland spawn failed (X11 support disabled): {e:#}");
+        }
+    }
+
     std::env::set_var("WAYLAND_DISPLAY", &config.compositor.socket_name);
 
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("electron");
@@ -1218,8 +1470,8 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     .expect("Error setting Ctrl-C handler");
 
     loop_handle
-        .insert_source(_drm_notifier, |event, _, data: &mut Option<EventLoopData>| {
-            let data = data.as_mut().expect("EventLoopData initialized");
+        .insert_source(_drm_notifier, |event, _, drm_data: &mut DrmLoopData| {
+            let data = drm_data.0.as_mut().expect("EventLoopData initialized");
             use smithay::backend::drm::DrmEvent;
             if !data.active {
                 if let DrmEvent::VBlank(_) = event {
@@ -1245,8 +1497,8 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     loop_handle
         .insert_source(
             libinput_backend,
-            move |event, _, data: &mut Option<EventLoopData>| {
-                let data = data.as_mut().expect("EventLoopData initialized");
+            move |event, _, drm_data: &mut DrmLoopData| {
+                let data = drm_data.0.as_mut().expect("EventLoopData initialized");
                 data.state.process_input_event(event);
                 data.input_events_pending = true;
             },
@@ -1258,10 +1510,10 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     render_frame(&mut loop_data);
 
     // Main event loop - purely event-driven (blocking)
-    let mut main_data: Option<EventLoopData> = Some(loop_data);
+    let mut main_data = DrmLoopData(Some(loop_data));
     event_loop
-        .run(None, &mut main_data, |opt_data| {
-            let data = opt_data.as_mut().expect("EventLoopData initialized");
+        .run(None, &mut main_data, |drm_data| {
+            let data = drm_data.0.as_mut().expect("EventLoopData initialized");
             if !data.state.running {
                 loop_signal.stop();
                 return;

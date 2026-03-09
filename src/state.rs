@@ -18,6 +18,7 @@ use smithay::{
         },
         relative_pointer::RelativePointerManagerState,
         pointer_constraints::{self, PointerConstraintsHandler, PointerConstraintsState},
+        keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor},
         shell::xdg::{XdgShellState, decoration::XdgDecorationState}, shm::ShmState, single_pixel_buffer::SinglePixelBufferState, tablet_manager::TabletSeatHandler, viewporter::ViewporterState, xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData}, xwayland_shell::XWaylandShellState
     },
     xwayland::{XWayland, xwm::X11Wm},
@@ -27,6 +28,7 @@ use smithay::reexports::wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_li
 pub mod portal;
 use crate::{
     config::Config,
+    cursor::CursorThemeManager,
     dmabuf::TextureCache,
     electron::{ElectronIpc, ElectronProcess},
     syscall::SyscallHandler,
@@ -77,6 +79,7 @@ pub struct WoState {
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub relative_pointer_manager_state: RelativePointerManagerState,
     pub pointer_constraints_state: PointerConstraintsState,
+    pub keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
     pub output_manager: OutputManagerState,
 
     pub seat: Seat<Self>,
@@ -109,6 +112,7 @@ pub struct WoState {
     /// Buffered pixel exports from offscreen rendering, written to SHM after render block.
     pub pending_shm_exports: Vec<(String, u32, u32, u32, Vec<u8>)>,
     pub grab_state: Option<crate::handlers::xdg_shell::GrabState>,
+    pub cursor_theme_manager: CursorThemeManager,
 
     /// Set to true inside new_toplevel to enable checkpoint logging on the
     /// same main-loop tick where the window appears.
@@ -156,6 +160,7 @@ impl WoState {
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
         let relative_pointer_manager_state = RelativePointerManagerState::new::<Self>(&dh);
         let pointer_constraints_state = PointerConstraintsState::new::<Self>(&dh);
+        let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
@@ -249,6 +254,11 @@ impl WoState {
         let popup_manager = PopupManager::default();
         let space = Space::default();
 
+        let cursor_theme_manager = CursorThemeManager::new(
+            &config.compositor.cursor_theme,
+            config.compositor.cursor_size,
+        );
+
         let mut state = Self {
             display_handle: dh,
             compositor_state,
@@ -269,6 +279,7 @@ impl WoState {
             cursor_shape_manager_state,
             relative_pointer_manager_state,
             pointer_constraints_state,
+            keyboard_shortcuts_inhibit_state,
             output_manager,
             seat,
             pointer_location: (0.0, 0.0).into(),
@@ -298,6 +309,7 @@ impl WoState {
             window_shm_buffers: std::collections::HashMap::new(),
             pending_shm_exports: Vec::new(),
             grab_state: None,
+            cursor_theme_manager,
             debug_new_toplevel: false,
             wayland_window_names: std::collections::HashMap::new(),
             wayland_name_to_id: std::collections::HashMap::new(),
@@ -624,3 +636,17 @@ impl PointerConstraintsHandler for WoState {
 
 smithay::delegate_pointer_constraints!(WoState);
 smithay::delegate_relative_pointer!(WoState);
+
+impl KeyboardShortcutsInhibitHandler for WoState {
+    fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
+        &mut self.keyboard_shortcuts_inhibit_state
+    }
+
+    fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
+        // Automatically activate: games/fullscreen apps that request inhibition
+        // should receive all key events without compositor interception.
+        inhibitor.activate();
+    }
+}
+
+smithay::delegate_keyboard_shortcuts_inhibit!(WoState);

@@ -60,6 +60,9 @@ input = "0.9"
 udev = "0.9"
 xkbcommon = "0.9"
 
+# Cursor themes
+xcursor = "0.3"
+
 # Rendering
 pixman = "0.2"
 drm-fourcc = "2.2.0"

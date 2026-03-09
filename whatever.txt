@@ -1,11 +1,578 @@
-[2m2026-03-09T13:10:06.828981Z[0m [32m INFO[0m [2mwo[0m[2m:[0m wo compositor starting
-[2m2026-03-09T13:10:06.829194Z[0m [32m INFO[0m [2mwo::config[0m[2m:[0m Loading config from "/home/hellings/.config/wo/config.toml"
-[2m2026-03-09T13:10:06.829640Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Running in DRM/KMS mode
-[2m2026-03-09T13:10:06.831907Z[0m [32m INFO[0m [2mwo[0m[2m:[0m LibSeat session created successfully
-[2m2026-03-09T13:10:06.832112Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Session notifier registered for VT switching
-[2m2026-03-09T13:10:06.832217Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Session is active, ready to open devices
-[2m2026-03-09T13:10:06.832243Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Using seat: seat0
-[2m2026-03-09T13:10:06.834656Z[0m [32m INFO[0m [2mwo[0m[2m:[0m trying DRM devices in priority order [3mcandidates[0m[2m=[0m["/dev/dri/card1"]
-[2m2026-03-09T13:10:06.834715Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Opening DRM device: "/dev/dri/card1"
-[2m2026-03-09T13:10:06.835267Z[0m [32m INFO[0m [2mwo[0m[2m:[0m libseat returned EAGAIN; pumping event loop and retrying device open... [3mgpu[0m[2m=[0m/dev/dri/card1
-[2m2026-03-09T13:10:07.351716Z[0m [33m WARN[0m [2mwo[0m[2m:[0m Failed to open DRM device: Failed to open device: Resource temporarily unavailable (os error 11) [3mgpu[0m[2m=[0m/dev/dri/card1 [3mpermission_related[0m[2m=[0mfalse [3mattempt[0m[2m=[0m10
+[2m2026-03-09T19:05:04.695426Z[0m [32m INFO[0m [2mwo[0m[2m:[0m wo compositor starting
+[2m2026-03-09T19:05:04.696005Z[0m [32m INFO[0m [2mwo::config[0m[2m:[0m Loading config from "/home/hellings/.config/wo/config.toml"
+[2m2026-03-09T19:05:04.696508Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Running in DRM/KMS mode
+[2m2026-03-09T19:05:04.698340Z[0m [32m INFO[0m [2mwo[0m[2m:[0m LibSeat session created successfully
+[2m2026-03-09T19:05:04.698373Z[0m [32m INFO[0m [2mwo[0m[2m:[0m libseat environment [3mseat[0m[2m=[0mseat0 [3mlibseat_backend[0m[2m=[0mlogind
+[2m2026-03-09T19:05:04.698483Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Session notifier registered for VT switching
+[2m2026-03-09T19:05:04.698605Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Session is active, ready to open devices
+[2m2026-03-09T19:05:04.698634Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Using seat: seat0
+[2m2026-03-09T19:05:04.701686Z[0m [32m INFO[0m [2mwo[0m[2m:[0m trying DRM devices in priority order [3mcandidates[0m[2m=[0m["/dev/dri/card1", "/dev/dri/card2"]
+[2m2026-03-09T19:05:04.701715Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Opening DRM device: "/dev/dri/card1"
+[2m2026-03-09T19:05:04.702165Z[0m [32m INFO[0m [2mwo[0m[2m:[0m using GPU [3mgpu[0m[2m=[0m/dev/dri/card1
+[2m2026-03-09T19:05:04.702199Z[0m [33m WARN[0m [2msmithay::backend::drm::device::fd[0m[2m:[0m Unable to become drm master, assuming unprivileged mode
+[2m2026-03-09T19:05:04.702984Z[0m [32m INFO[0m [2mwo[0m[2m:[0m DRM device created [3matomic[0m[2m=[0mtrue
+[2m2026-03-09T19:05:05.166132Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m IPC socket listening [3msocket[0m[2m=[0m"/run/user/1000/wo-ipc.sock"
+[2m2026-03-09T19:05:05.166366Z[0m [32m INFO[0m [2mwo[0m[2m:[0m resolved render node [3mcard[0m[2m=[0m/dev/dri/card1 [3mrender_node[0m[2m=[0m/dev/dri/renderD128
+[2m2026-03-09T19:05:05.166392Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m Spawning Electron for window 'main' with config: WindowConfig { name: "main", url: Some("http://localhost:5173"), html: None, css: None, js: None, width: 2560, height: 1600, x: 0, y: 0, z_order: -1073741824, fps: 60, format: "ARGB8888", focusable: false, interactive: false, floating: false }
+[2m2026-03-09T19:05:05.166450Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m Serialized config: {"name":"main","url":"http://localhost:5173","html":null,"css":null,"js":null,"width":2560,"height":1600,"x":0,"y":0,"z_order":-1073741824,"fps":60,"format":"ARGB8888","focusable":false,"interactive":false,"floating":false}
+[2m2026-03-09T19:05:05.166833Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m spawned Electron process [3mwindow[0m[2m=[0mmain [3mpid[0m[2m=[0m3988 [3mrender_node[0m[2m=[0m"/dev/dri/renderD128"
+[2m2026-03-09T19:05:05.166880Z[0m [32m INFO[0m [2mwo[0m[2m:[0m using swapchain format/modifiers from renderer [3mswapchain_format[0m[2m=[0mDrmFourcc(XR24) [3mmodifiers[0m[2m=[0m14
+[2m2026-03-09T19:05:05.229616Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Wayland socket bound [3msocket[0m[2m=[0mwo-0
+[2m2026-03-09T19:05:05.229850Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Kickstarting VBlank-driven rendering
+[2m2026-03-09T19:05:05.229867Z[0m [32m INFO[0m [2mwo[0m[2m:[0m First render: output=2560x1600, windows=1, bg=Color32F([0.0, 0.0, 0.0, 1.0])
+[2m2026-03-09T19:05:05.232882Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #0: textures_rendered=0, gles_cache=0, windows=1
+[2m2026-03-09T19:05:05.233523Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Performing modeset commit (commit_pending=false, first_frame=true, textures=0)
+[2m2026-03-09T19:05:05.234462Z[0m [32m INFO[0m [2mwo[0m[2m:[0m First successful page flip (commit_pending=false)
+[Wo] Electron starting, NODE_VERSION= v22.22.0
+[Wo] WO_WINDOW_CONFIG env = {"name":"main","url":"http://localhost:5173","html":null,"css":null,"js":null,"width":2560,"height":1600,"x":0,"y":0,"z_order":-1073741824,"fps":60,"format":"ARGB8888","focusable":false,"interactive":false,"floating":false}
+[Wo] WINDOW_CONFIG parsed = {"name":"main","url":"http://localhost:5173","html":null,"css":null,"js":null,"width":2560,"height":1600,"x":0,"y":0,"z_order":-1073741824,"fps":60,"format":"ARGB8888","focusable":false,"interactive":false,"floating":false}
+[Wo] App ready, CLIENT_MODE= false WO_STANDALONE= undefined
+[Wo] Will connect to compositor
+[Wo] Connecting to compositor IPC: /run/user/1000/wo-ipc.sock
+[Wo] Portal UI bridge listening at /tmp/wo-portal-ui.sock
+[Wo] IPC connected, sent HELLO message
+[2m2026-03-09T19:05:05.740058Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m Electron window connected [3mwindow[0m[2m=[0mmain
+[Wo] DMABUF sender initialized
+[Wo] Creating window
+[Wo] createWindow starting
+[Wo] preloadPath=/home/hellings/Documents/wo/electron/dist/preload.js
+[Wo] BrowserWindow created, CLIENT_MODE=false offscreen=true
+[Wo] setupIpcHandlers completed
+[Wo] Loading content URL: http://localhost:5173
+
+  VITE v8.0.0-beta.16  ready in 368 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+[Wo] Content loaded from: http://localhost:5173
+[Wo] Page initialized, setting up rendering
+[Wo] Setting up OSR rendering, FPS=60
+[Wo] createWindow completed successfully
+[Wo] Window created successfully
+[Wo] ERROR sending frame: Error: gbm_bo_create failed: all buffer creation methods exhausted
+[2m2026-03-09T19:05:06.078535Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m1
+[2m2026-03-09T19:05:06.091525Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m2
+[2m2026-03-09T19:05:06.115813Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m3
+[2m2026-03-09T19:05:06.135055Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m4
+[2m2026-03-09T19:05:06.158107Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m5
+[2m2026-03-09T19:05:06.167813Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m6
+[2m2026-03-09T19:05:06.185891Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m7
+[2m2026-03-09T19:05:06.215319Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m8
+[2m2026-03-09T19:05:06.229324Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m9
+[Wo] SKIPPED paint due to frame backpressure inFlight=2
+[2m2026-03-09T19:05:06.253232Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m10
+[2m2026-03-09T19:05:06.267600Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m11
+[2m2026-03-09T19:05:06.291503Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m12
+[2m2026-03-09T19:05:06.306499Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m13
+[2m2026-03-09T19:05:06.326881Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m14
+[2m2026-03-09T19:05:06.344775Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m15
+[2m2026-03-09T19:05:06.359875Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m16
+[2m2026-03-09T19:05:06.379902Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m17
+[2m2026-03-09T19:05:06.396090Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m18
+[2m2026-03-09T19:05:06.418605Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m19
+[2m2026-03-09T19:05:06.433523Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m20
+[2m2026-03-09T19:05:06.451557Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m21
+[2m2026-03-09T19:05:06.468400Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m22
+[2m2026-03-09T19:05:06.487784Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m23
+[2m2026-03-09T19:05:06.508063Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m24
+[2m2026-03-09T19:05:06.524830Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m25
+[2m2026-03-09T19:05:06.540826Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m26
+[2m2026-03-09T19:05:06.560716Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m27
+[2m2026-03-09T19:05:06.577925Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m28
+[2m2026-03-09T19:05:06.594433Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m29
+[2m2026-03-09T19:05:06.613620Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m30
+[2m2026-03-09T19:05:06.630279Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m31
+[2m2026-03-09T19:05:06.646498Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m32
+[2m2026-03-09T19:05:06.665370Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m33
+[2m2026-03-09T19:05:06.681783Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m34
+[2m2026-03-09T19:05:06.698679Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m35
+[2m2026-03-09T19:05:06.717124Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m36
+[2m2026-03-09T19:05:06.733661Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m37
+[2m2026-03-09T19:05:06.750732Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m38
+[2m2026-03-09T19:05:06.768398Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m39
+[2m2026-03-09T19:05:06.786759Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m40
+[2m2026-03-09T19:05:06.805011Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m41
+[2m2026-03-09T19:05:06.820089Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m42
+[2m2026-03-09T19:05:06.841008Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m43
+[2m2026-03-09T19:05:06.858484Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m44
+[2m2026-03-09T19:05:06.873345Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m45
+[2m2026-03-09T19:05:06.895251Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m46
+[2m2026-03-09T19:05:06.913572Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m47
+[2m2026-03-09T19:05:06.928565Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m48
+[2m2026-03-09T19:05:06.946778Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m49
+[2m2026-03-09T19:05:06.963032Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m50
+[2m2026-03-09T19:05:06.981865Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m51
+[2m2026-03-09T19:05:07.003166Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m52
+[2m2026-03-09T19:05:07.019432Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m53
+[2m2026-03-09T19:05:07.036505Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m54
+[2m2026-03-09T19:05:07.055273Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m55
+[2m2026-03-09T19:05:07.071839Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m56
+[2m2026-03-09T19:05:07.089251Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m57
+[2m2026-03-09T19:05:07.107110Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m58
+[2m2026-03-09T19:05:07.125533Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m59
+[2m2026-03-09T19:05:07.143999Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m60
+[2m2026-03-09T19:05:07.158213Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m61
+[2m2026-03-09T19:05:07.180784Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m62
+[2m2026-03-09T19:05:07.198923Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m63
+[2m2026-03-09T19:05:07.214403Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m64
+[2m2026-03-09T19:05:07.235149Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m65
+[2m2026-03-09T19:05:07.253179Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m66
+[2m2026-03-09T19:05:07.270568Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m67
+[2m2026-03-09T19:05:07.285814Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m68
+[2m2026-03-09T19:05:07.304510Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m69
+[2m2026-03-09T19:05:07.319567Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m70
+[2m2026-03-09T19:05:07.342323Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m71
+[2m2026-03-09T19:05:07.361423Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m72
+[2m2026-03-09T19:05:07.371420Z[0m [32m INFO[0m [2mwo[0m[2m:[0m First DMABUF imported for 'main' (2560x1600, total_textures=1)
+[2m2026-03-09T19:05:07.371855Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Spawned portal service: "/home/hellings/Documents/wo/target/debug/wo-portal"
+[2m2026-03-09T19:05:07.373260Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #1: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.374775Z[0m [32m INFO[0m [2mwo_portal[0m[2m:[0m xdg-desktop-portal-wo starting
+[2m2026-03-09T19:05:07.374902Z[0m [32m INFO[0m [2mwo::config[0m[2m:[0m Loading config from "/home/hellings/.config/wo/config.toml"
+[2m2026-03-09T19:05:07.376323Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m73
+[2m2026-03-09T19:05:07.378710Z[0m [32m INFO[0m [2mwo_portal[0m[2m:[0m Portal service registered as org.freedesktop.impl.portal.desktop.wo
+[2m2026-03-09T19:05:07.378751Z[0m [32m INFO[0m [2mwo_portal[0m[2m:[0m Compositor IPC socket: /run/user/1000/wo-ipc.sock
+[2m2026-03-09T19:05:07.378764Z[0m [32m INFO[0m [2mwo_portal[0m[2m:[0m Listening for screen capture requests...
+[2m2026-03-09T19:05:07.385634Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #2: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.398533Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #3: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.398557Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m74
+[2m2026-03-09T19:05:07.408768Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #4: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.414881Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m75
+[2m2026-03-09T19:05:07.424981Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #5: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.429527Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m76
+[2m2026-03-09T19:05:07.441735Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #6: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.449042Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m77
+[2m2026-03-09T19:05:07.458571Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #7: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.467037Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m78
+[2m2026-03-09T19:05:07.475323Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #8: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.482430Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m79
+[2m2026-03-09T19:05:07.492752Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #9: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.506061Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m80
+[2m2026-03-09T19:05:07.510418Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #10: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.519103Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m81
+[2m2026-03-09T19:05:07.527895Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #11: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.541595Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #12: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.543444Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m82
+[2m2026-03-09T19:05:07.558040Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m83
+[2m2026-03-09T19:05:07.558618Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #13: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.575042Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #14: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.580487Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m84
+[2m2026-03-09T19:05:07.592113Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #15: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.598258Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m85
+[2m2026-03-09T19:05:07.608849Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #16: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.615962Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m86
+[2m2026-03-09T19:05:07.626569Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #17: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.636117Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m87
+[2m2026-03-09T19:05:07.642524Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #18: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.655159Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m88
+[2m2026-03-09T19:05:07.659312Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #19: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.671247Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m89
+[2m2026-03-09T19:05:07.675380Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #20: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.691736Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #21: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.695107Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m90
+[2m2026-03-09T19:05:07.708598Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #22: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.710449Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m91
+[2m2026-03-09T19:05:07.725305Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #23: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.729455Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m92
+[2m2026-03-09T19:05:07.741999Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #24: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.742543Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m93
+[2m2026-03-09T19:05:07.759094Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #25: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.767284Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m94
+[2m2026-03-09T19:05:07.775382Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #26: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.781747Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m95
+[2m2026-03-09T19:05:07.792691Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #27: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.804420Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m96
+[2m2026-03-09T19:05:07.808976Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #28: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.819069Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m97
+[2m2026-03-09T19:05:07.826573Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #29: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.839607Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m98
+[2m2026-03-09T19:05:07.842139Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #30: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.852177Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m99
+[2m2026-03-09T19:05:07.859664Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #31: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.873405Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m100
+[2m2026-03-09T19:05:07.875306Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #32: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.889434Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m101
+[2m2026-03-09T19:05:07.892493Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #33: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.910140Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m102
+[2m2026-03-09T19:05:07.911559Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #34: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.925015Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m103
+[2m2026-03-09T19:05:07.933414Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #35: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.945412Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m104
+[2m2026-03-09T19:05:07.955034Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #36: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.964758Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m105
+[2m2026-03-09T19:05:07.967527Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #37: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.975407Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #38: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.977139Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m106
+[2m2026-03-09T19:05:07.992236Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #39: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:07.994447Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m107
+[2m2026-03-09T19:05:08.009142Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #40: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.012236Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m108
+[2m2026-03-09T19:05:08.025700Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #41: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.031393Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m109
+[2m2026-03-09T19:05:08.042188Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #42: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.043748Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m110
+[2m2026-03-09T19:05:08.060693Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #43: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.072965Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m111
+[2m2026-03-09T19:05:08.075576Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #44: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.085621Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m112
+[2m2026-03-09T19:05:08.092495Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #45: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.102376Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m113
+[2m2026-03-09T19:05:08.110177Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #46: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.119066Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m114
+[2m2026-03-09T19:05:08.126233Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #47: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.135287Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m115
+[2m2026-03-09T19:05:08.142536Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #48: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.150631Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m116
+[2m2026-03-09T19:05:08.159303Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #49: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.171184Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m117
+[2m2026-03-09T19:05:08.175739Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #50: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.190803Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m118
+[2m2026-03-09T19:05:08.192719Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #51: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.209300Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #52: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.211910Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m119
+[2m2026-03-09T19:05:08.226057Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #53: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.226385Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m120
+[2m2026-03-09T19:05:08.241468Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m121
+[2m2026-03-09T19:05:08.242524Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #54: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.259309Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #55: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.259672Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m122
+[2m2026-03-09T19:05:08.275543Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m123
+[2m2026-03-09T19:05:08.275965Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #56: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.290724Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m124
+[2m2026-03-09T19:05:08.293454Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #57: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.308995Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #58: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.311290Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m125
+[2m2026-03-09T19:05:08.326174Z[0m [32m INFO[0m [2mwo[0m[2m:[0m render_frame #59: textures_rendered=1, gles_cache=1, windows=1
+[2m2026-03-09T19:05:08.332259Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m126
+[2m2026-03-09T19:05:08.347320Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m127
+[2m2026-03-09T19:05:08.367845Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m128
+[2m2026-03-09T19:05:08.386642Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m129
+[2m2026-03-09T19:05:08.408885Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m130
+[2m2026-03-09T19:05:08.428166Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m131
+[2m2026-03-09T19:05:08.446778Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m132
+[2m2026-03-09T19:05:08.461172Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m133
+[2m2026-03-09T19:05:08.484331Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m134
+[2m2026-03-09T19:05:08.506797Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m135
+[2m2026-03-09T19:05:08.527019Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m136
+[2m2026-03-09T19:05:08.544423Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m137
+[2m2026-03-09T19:05:08.565329Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m138
+[2m2026-03-09T19:05:08.583494Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m139
+[2m2026-03-09T19:05:08.605203Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m140
+[2m2026-03-09T19:05:08.757098Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m141
+[2m2026-03-09T19:05:08.776883Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m142
+[2m2026-03-09T19:05:08.797115Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m143
+[2m2026-03-09T19:05:08.817753Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m144
+[2m2026-03-09T19:05:08.837605Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m145
+[Wo] Load timeout, continuing
+[2m2026-03-09T19:05:08.858544Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m146
+[2m2026-03-09T19:05:08.879656Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m147
+[2m2026-03-09T19:05:08.896826Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m148
+[2m2026-03-09T19:05:08.917898Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m149
+[2m2026-03-09T19:05:08.937260Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m150
+[2m2026-03-09T19:05:08.958668Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m151
+[2m2026-03-09T19:05:08.974782Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m152
+[2m2026-03-09T19:05:09.000150Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m153
+[2m2026-03-09T19:05:09.016152Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m154
+[2m2026-03-09T19:05:09.035956Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m155
+[2m2026-03-09T19:05:09.055953Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m156
+[2m2026-03-09T19:05:09.070892Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m157
+[2m2026-03-09T19:05:09.087604Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m158
+[2m2026-03-09T19:05:09.112960Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m159
+[2m2026-03-09T19:05:09.143908Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m160
+[2m2026-03-09T19:05:09.158543Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m161
+[2m2026-03-09T19:05:09.181403Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m162
+[2m2026-03-09T19:05:09.199534Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m163
+[2m2026-03-09T19:05:09.215902Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m164
+[2m2026-03-09T19:05:09.231086Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m165
+[2m2026-03-09T19:05:09.247916Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m166
+[2m2026-03-09T19:05:09.263202Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m167
+[2m2026-03-09T19:05:09.279943Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m168
+[2m2026-03-09T19:05:09.302232Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m169
+[2m2026-03-09T19:05:09.322814Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m170
+[2m2026-03-09T19:05:09.335478Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m171
+[2m2026-03-09T19:05:09.358890Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m172
+[2m2026-03-09T19:05:09.381262Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m173
+[2m2026-03-09T19:05:09.395508Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m174
+[2m2026-03-09T19:05:09.417419Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m175
+[2m2026-03-09T19:05:09.433241Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m176
+[2m2026-03-09T19:05:09.449443Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m177
+[2m2026-03-09T19:05:09.464904Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m178
+[2m2026-03-09T19:05:09.481937Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m179
+[2m2026-03-09T19:05:09.497275Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m180
+[2m2026-03-09T19:05:09.514493Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m181
+[2m2026-03-09T19:05:09.537129Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m182
+[2m2026-03-09T19:05:09.551380Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m183
+[2m2026-03-09T19:05:09.574504Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m184
+[2m2026-03-09T19:05:09.588673Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m185
+[2m2026-03-09T19:05:09.610532Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m186
+[2m2026-03-09T19:05:09.626399Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m187
+[2m2026-03-09T19:05:09.643221Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m188
+[2m2026-03-09T19:05:09.656890Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m189
+[2m2026-03-09T19:05:09.676851Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m190
+[2m2026-03-09T19:05:09.689396Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m191
+[2m2026-03-09T19:05:09.705067Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m192
+[2m2026-03-09T19:05:09.727534Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m193
+[2m2026-03-09T19:05:09.749999Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m194
+[2m2026-03-09T19:05:09.765554Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m195
+[2m2026-03-09T19:05:09.784934Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m196
+[2m2026-03-09T19:05:09.802931Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m197
+[2m2026-03-09T19:05:09.818907Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m198
+[2m2026-03-09T19:05:09.835515Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m199
+[2m2026-03-09T19:05:09.858681Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m200
+[2m2026-03-09T19:05:09.875952Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m201
+[2m2026-03-09T19:05:09.894321Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m202
+[2m2026-03-09T19:05:09.916169Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m203
+[2m2026-03-09T19:05:09.928981Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m204
+[2m2026-03-09T19:05:09.952677Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m205
+[2m2026-03-09T19:05:09.967260Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m206
+[2m2026-03-09T19:05:09.990725Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m207
+[2m2026-03-09T19:05:10.006487Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m208
+[2m2026-03-09T19:05:10.021208Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m209
+[2m2026-03-09T19:05:10.035614Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m210
+[2m2026-03-09T19:05:10.059276Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m211
+[2m2026-03-09T19:05:10.077026Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m212
+[2m2026-03-09T19:05:10.095038Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m213
+[2m2026-03-09T19:05:10.107985Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m214
+[2m2026-03-09T19:05:10.133539Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m215
+[2m2026-03-09T19:05:10.149316Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m216
+[2m2026-03-09T19:05:10.168667Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m217
+[2m2026-03-09T19:05:10.185506Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m218
+[2m2026-03-09T19:05:10.201283Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m219
+[2m2026-03-09T19:05:10.220526Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m220
+[2m2026-03-09T19:05:10.239132Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m221
+[2m2026-03-09T19:05:10.254284Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m222
+[2m2026-03-09T19:05:10.277162Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m223
+[2m2026-03-09T19:05:10.291921Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m224
+[2m2026-03-09T19:05:10.314433Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m225
+[2m2026-03-09T19:05:10.328169Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m226
+[2m2026-03-09T19:05:10.347406Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m227
+[2m2026-03-09T19:05:10.360267Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m228
+[2m2026-03-09T19:05:10.388525Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m229
+[2m2026-03-09T19:05:10.402887Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m230
+[2m2026-03-09T19:05:10.425009Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m231
+[2m2026-03-09T19:05:10.446980Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m232
+[2m2026-03-09T19:05:10.462289Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m233
+[2m2026-03-09T19:05:10.482716Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m234
+[2m2026-03-09T19:05:10.499518Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m235
+[2m2026-03-09T19:05:10.519049Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m236
+[2m2026-03-09T19:05:10.531616Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m237
+[2m2026-03-09T19:05:10.554883Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m238
+[2m2026-03-09T19:05:10.568809Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m239
+[2m2026-03-09T19:05:10.588641Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m240
+[2m2026-03-09T19:05:10.607131Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m241
+[2m2026-03-09T19:05:10.625324Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m242
+[2m2026-03-09T19:05:10.642669Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m243
+[2m2026-03-09T19:05:10.660453Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m244
+[2m2026-03-09T19:05:10.674928Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m245
+[2m2026-03-09T19:05:10.696541Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m246
+[2m2026-03-09T19:05:10.715069Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m247
+[2m2026-03-09T19:05:10.729069Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m248
+[2m2026-03-09T19:05:10.749994Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m249
+[2m2026-03-09T19:05:10.768351Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m250
+[2m2026-03-09T19:05:10.785358Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m251
+[2m2026-03-09T19:05:10.805945Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m252
+[2m2026-03-09T19:05:10.824142Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m253
+[2m2026-03-09T19:05:10.840256Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m254
+[2m2026-03-09T19:05:10.860929Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m255
+[2m2026-03-09T19:05:10.879418Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m256
+[2m2026-03-09T19:05:10.893761Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m257
+[2m2026-03-09T19:05:10.915569Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m258
+[2m2026-03-09T19:05:10.933922Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m259
+[2m2026-03-09T19:05:10.948233Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m260
+[2m2026-03-09T19:05:10.969982Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m261
+[2m2026-03-09T19:05:10.988772Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m262
+[2m2026-03-09T19:05:11.003425Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m263
+[2m2026-03-09T19:05:11.024974Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m264
+[2m2026-03-09T19:05:11.043851Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m265
+[2m2026-03-09T19:05:11.057928Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m266
+[2m2026-03-09T19:05:11.079831Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m267
+[2m2026-03-09T19:05:11.098666Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m268
+[2m2026-03-09T19:05:11.113216Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m269
+[2m2026-03-09T19:05:11.134778Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m270
+[2m2026-03-09T19:05:11.153050Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m271
+[2m2026-03-09T19:05:11.167202Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m272
+[2m2026-03-09T19:05:11.188755Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m273
+[2m2026-03-09T19:05:11.207161Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m274
+[2m2026-03-09T19:05:11.221273Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m275
+[2m2026-03-09T19:05:11.242745Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m276
+[2m2026-03-09T19:05:11.261659Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m277
+[2m2026-03-09T19:05:11.275941Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m278
+[2m2026-03-09T19:05:11.297677Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m279
+[2m2026-03-09T19:05:11.316634Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m280
+[2m2026-03-09T19:05:11.331408Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m281
+[2m2026-03-09T19:05:11.351880Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m282
+[2m2026-03-09T19:05:11.370290Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m283
+[2m2026-03-09T19:05:11.384324Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m284
+[2m2026-03-09T19:05:11.405958Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m285
+[2m2026-03-09T19:05:11.424713Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m286
+[2m2026-03-09T19:05:11.439068Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m287
+[2m2026-03-09T19:05:11.460789Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m288
+[2m2026-03-09T19:05:11.479149Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m289
+[2m2026-03-09T19:05:11.493560Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m290
+[2m2026-03-09T19:05:11.514261Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m291
+[2m2026-03-09T19:05:11.532751Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m292
+[2m2026-03-09T19:05:11.546625Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m293
+[2m2026-03-09T19:05:11.568310Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m294
+[2m2026-03-09T19:05:11.587304Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m295
+[2m2026-03-09T19:05:11.602688Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m296
+[2m2026-03-09T19:05:11.622009Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m297
+[2m2026-03-09T19:05:11.640316Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m298
+[2m2026-03-09T19:05:11.656712Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m299
+[2m2026-03-09T19:05:11.677363Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m300
+[2m2026-03-09T19:05:11.696314Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m301
+[2m2026-03-09T19:05:11.710829Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m302
+[2m2026-03-09T19:05:11.731520Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m303
+[2m2026-03-09T19:05:11.749776Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m304
+[2m2026-03-09T19:05:11.764112Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m305
+[2m2026-03-09T19:05:11.785723Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m306
+[2m2026-03-09T19:05:11.804143Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m307
+[2m2026-03-09T19:05:11.818835Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m308
+[2m2026-03-09T19:05:11.839330Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m309
+[2m2026-03-09T19:05:11.857515Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m310
+[2m2026-03-09T19:05:11.871818Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m311
+[2m2026-03-09T19:05:11.893550Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m312
+[2m2026-03-09T19:05:11.911740Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m313
+[2m2026-03-09T19:05:11.926315Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m314
+[2m2026-03-09T19:05:11.947679Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m315
+[2m2026-03-09T19:05:11.966154Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m316
+[2m2026-03-09T19:05:11.981056Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m317
+[2m2026-03-09T19:05:12.001704Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m318
+[2m2026-03-09T19:05:12.019779Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m319
+[2m2026-03-09T19:05:12.034249Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m320
+[2m2026-03-09T19:05:12.055935Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m321
+[2m2026-03-09T19:05:12.074940Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m322
+[2m2026-03-09T19:05:12.089564Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m323
+[2m2026-03-09T19:05:12.110190Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m324
+[2m2026-03-09T19:05:12.140751Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m325
+[2m2026-03-09T19:05:12.164765Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m326
+[2m2026-03-09T19:05:12.177277Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m327
+[2m2026-03-09T19:05:12.202364Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m328
+[2m2026-03-09T19:05:12.218435Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m329
+[2m2026-03-09T19:05:12.239689Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m330
+[2m2026-03-09T19:05:12.255865Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m331
+[2m2026-03-09T19:05:12.271073Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m332
+[2m2026-03-09T19:05:12.286363Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m333
+[2m2026-03-09T19:05:12.312331Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m334
+[2m2026-03-09T19:05:12.328733Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m335
+[2m2026-03-09T19:05:12.346479Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m336
+[2m2026-03-09T19:05:12.373025Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m337
+[2m2026-03-09T19:05:12.390977Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m338
+[2m2026-03-09T19:05:12.407722Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m339
+[2m2026-03-09T19:05:12.424472Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m340
+[2m2026-03-09T19:05:12.441822Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m341
+[2m2026-03-09T19:05:12.460188Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m342
+[2m2026-03-09T19:05:12.477883Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m343
+[2m2026-03-09T19:05:12.492498Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m344
+[2m2026-03-09T19:05:12.513175Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m345
+[2m2026-03-09T19:05:12.531739Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m346
+[2m2026-03-09T19:05:12.545860Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m347
+[2m2026-03-09T19:05:12.567429Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m348
+[2m2026-03-09T19:05:12.586376Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m349
+[2m2026-03-09T19:05:12.601073Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m350
+[2m2026-03-09T19:05:12.621546Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m351
+[2m2026-03-09T19:05:12.640222Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m352
+[2m2026-03-09T19:05:12.654652Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m353
+[2m2026-03-09T19:05:12.675364Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m354
+[2m2026-03-09T19:05:12.693906Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m355
+[2m2026-03-09T19:05:12.708264Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m356
+[2m2026-03-09T19:05:12.729829Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m357
+[2m2026-03-09T19:05:12.748635Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m358
+[2m2026-03-09T19:05:12.762763Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m359
+[2m2026-03-09T19:05:12.787127Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m360
+[2m2026-03-09T19:05:12.803766Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m361
+[2m2026-03-09T19:05:12.818997Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m362
+[2m2026-03-09T19:05:12.837389Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m363
+[2m2026-03-09T19:05:12.852794Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m364
+[2m2026-03-09T19:05:12.873555Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m365
+[2m2026-03-09T19:05:12.891577Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m366
+[2m2026-03-09T19:05:12.905672Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m367
+[2m2026-03-09T19:05:12.927162Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m368
+[2m2026-03-09T19:05:12.947907Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m369
+[2m2026-03-09T19:05:12.963667Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m370
+[2m2026-03-09T19:05:12.982352Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m371
+[2m2026-03-09T19:05:13.000854Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m372
+[2m2026-03-09T19:05:13.015132Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m373
+[2m2026-03-09T19:05:13.036803Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m374
+[2m2026-03-09T19:05:13.056234Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m375
+[2m2026-03-09T19:05:13.071863Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m376
+[2m2026-03-09T19:05:13.091266Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m377
+[2m2026-03-09T19:05:13.109715Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m378
+[2m2026-03-09T19:05:13.123733Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m379
+[2m2026-03-09T19:05:13.145413Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m380
+[2m2026-03-09T19:05:13.163979Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m381
+[2m2026-03-09T19:05:13.178681Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m382
+[2m2026-03-09T19:05:13.199512Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m383
+[2m2026-03-09T19:05:13.218213Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m384
+[2m2026-03-09T19:05:13.232930Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m385
+[2m2026-03-09T19:05:13.253482Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m386
+[2m2026-03-09T19:05:13.272062Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m387
+[2m2026-03-09T19:05:13.287568Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m388
+[2m2026-03-09T19:05:13.306257Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m389
+[2m2026-03-09T19:05:13.324128Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m390
+[2m2026-03-09T19:05:13.340022Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m391
+[2m2026-03-09T19:05:13.360564Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m392
+[2m2026-03-09T19:05:13.379982Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m393
+[2m2026-03-09T19:05:13.394802Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m394
+[2m2026-03-09T19:05:13.415633Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m395
+[2m2026-03-09T19:05:13.439081Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m396
+[2m2026-03-09T19:05:13.457838Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m397
+[2m2026-03-09T19:05:13.473913Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m398
+[2m2026-03-09T19:05:13.494966Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m399
+[2m2026-03-09T19:05:13.508544Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m400
+[2m2026-03-09T19:05:13.523620Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m401
+[2m2026-03-09T19:05:13.539501Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m402
+[2m2026-03-09T19:05:13.563298Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m403
+[2m2026-03-09T19:05:13.579611Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m404
+[2m2026-03-09T19:05:13.596487Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m405
+[2m2026-03-09T19:05:13.616174Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m406
+[2m2026-03-09T19:05:13.631073Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m407
+[2m2026-03-09T19:05:13.646849Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m408
+[2m2026-03-09T19:05:13.664197Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m409
+[2m2026-03-09T19:05:13.690689Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m410
+[2m2026-03-09T19:05:13.708523Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m411
+[2m2026-03-09T19:05:13.722851Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m412
+[2m2026-03-09T19:05:13.743455Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m413
+[2m2026-03-09T19:05:13.763570Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m414
+[2m2026-03-09T19:05:13.782992Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m415
+[2m2026-03-09T19:05:13.801121Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m416
+[2m2026-03-09T19:05:13.825578Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m417
+[2m2026-03-09T19:05:13.838722Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m418
+[2m2026-03-09T19:05:13.855922Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m419
+[2m2026-03-09T19:05:13.876609Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m420
+[2m2026-03-09T19:05:13.900907Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m421
+[2m2026-03-09T19:05:13.916321Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m422
+[2m2026-03-09T19:05:13.935874Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m423
+[2m2026-03-09T19:05:13.955127Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m424
+[2m2026-03-09T19:05:13.978076Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m425
+[2m2026-03-09T19:05:14.000845Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m426
+[2m2026-03-09T19:05:14.017284Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m427
+[2m2026-03-09T19:05:14.038754Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m428
+[2m2026-03-09T19:05:14.056086Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m429
+[2m2026-03-09T19:05:14.073033Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m430
+[2m2026-03-09T19:05:14.093819Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m431
+[2m2026-03-09T19:05:14.110765Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m432
+[2m2026-03-09T19:05:14.131288Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m433
+[2m2026-03-09T19:05:14.147637Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m434
+[2m2026-03-09T19:05:14.162861Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m435
+[2m2026-03-09T19:05:14.180438Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m436
+[2m2026-03-09T19:05:14.194591Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m437
+[2m2026-03-09T19:05:14.220352Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m438
+[2m2026-03-09T19:05:14.237740Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m439
+[2m2026-03-09T19:05:14.253159Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m440
+[2m2026-03-09T19:05:14.276561Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m441
+[2m2026-03-09T19:05:14.291959Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m442
+[2m2026-03-09T19:05:14.312479Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m443
+[2m2026-03-09T19:05:14.325942Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m444
+[2m2026-03-09T19:05:14.344599Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m445
+[2m2026-03-09T19:05:14.360100Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m446
+[2m2026-03-09T19:05:14.379636Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m447
+[2m2026-03-09T19:05:14.393127Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m448
+[2m2026-03-09T19:05:14.410253Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m449
+[2m2026-03-09T19:05:14.433364Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m450
+[2m2026-03-09T19:05:14.452105Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m451
+[2m2026-03-09T19:05:14.470881Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m452
+[2m2026-03-09T19:05:14.492229Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m453
+[2m2026-03-09T19:05:14.512036Z[0m [32m INFO[0m [2mwo::electron[0m[2m:[0m received FRAME, sending ACK [3mwindow[0m[2m=[0mmain [3mseq[0m[2m=[0m454
+[Wo] ERROR sending frame: Error: EPIPE: broken pipe, write
+[Wo] ERROR sending frame: Error: EPIPE: broken pipe, write
+[Wo] IPC connection closed
+[Wo] SKIPPED paint (dmabufSender=false ipcConnected=false)

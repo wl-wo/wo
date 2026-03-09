@@ -81,6 +81,14 @@ pub struct CompositorConfig {
     /// Pinned applications for the launcher dock
     #[serde(default)]
     pub applications: Vec<ApplicationConfig>,
+
+    /// XCursor theme name (default: "breeze_cursors")
+    #[serde(default = "default_cursor_theme")]
+    pub cursor_theme: String,
+
+    /// Cursor size in pixels (default: 24)
+    #[serde(default = "default_cursor_size")]
+    pub cursor_size: u32,
 }
 
 impl Default for CompositorConfig {
@@ -100,6 +108,8 @@ impl Default for CompositorConfig {
             enable_syscalls: false,
             focus_notify: false,
             applications: vec![],
+            cursor_theme: default_cursor_theme(),
+            cursor_size: default_cursor_size(),
         }
     }
 }
@@ -265,6 +275,8 @@ fn default_fps()         -> u32 { 60 }
 fn default_format()      -> String { "ARGB8888".into() }
 fn default_asset_prefix() -> String { "file".into() }
 fn default_true()        -> bool { true }
+fn default_cursor_theme() -> String { "breeze_cursors".into() }
+fn default_cursor_size() -> u32 { 24 }
 
 fn expand_path(s: &str) -> String {
     shellexpand::full(s)
