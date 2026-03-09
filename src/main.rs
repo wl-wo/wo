@@ -116,6 +116,22 @@ fn is_eagain_message(msg: &str) -> bool {
         || lowered.contains("wouldblock")
 }
 
+/// Transient errors from `session.open()` that should be retried with event
+/// loop pumping:
+///
+/// • **EAGAIN** – libseat's seat manager hasn't finished processing a prior
+///   request.  Well-documented; all compositors retry.
+///
+/// • **EACCES / EPERM** – On logind-managed sessions (common with Ly, greetd,
+///   and similar display managers) the session activation inside logind may
+///   lag behind libseat's own `is_active()` flag.  logind's `TakeDevice`
+///   D-Bus method returns EACCES until it has fully activated the session on
+///   the foreground VT.  Pumping the event loop lets the remaining activation
+///   messages propagate, after which the retry succeeds.
+fn is_transient_open_error(msg: &str) -> bool {
+    is_eagain_message(msg) || is_permission_denied_message(msg)
+}
+
 fn enumerate_drm_card_paths() -> Vec<std::path::PathBuf> {
     let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir("/dev/dri")
         .ok()
@@ -556,6 +572,11 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         )
     })?;
     info!("LibSeat session created successfully");
+    info!(
+        seat = %session.seat(),
+        libseat_backend = %std::env::var("LIBSEAT_BACKEND").unwrap_or_else(|_| "auto (not set)".into()),
+        "libseat environment"
+    );
     let mut session = session;
 
     // Create the event loop early—before opening any DRM devices.
@@ -696,27 +717,34 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     // handling through the dispatch/retry loop below.
     let open_flags = OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY;
 
-    // Round-robin EAGAIN retry across all GPU candidates.
+    // Round-robin retry across all GPU candidates for transient errors.
     //
-    // The old per-GPU retry loop had a structural flaw: EAGAIN from libseat is
-    // a seat-level condition (the seat manager hasn't finished processing an
-    // earlier request), not a GPU-level one.  If every candidate gets EAGAIN the
-    // old loop would spend its entire 500 ms budget on the first GPU and then
-    // immediately abandon all remaining ones without any further dispatching.
+    // Both EAGAIN and EACCES/EPERM are retried with event-loop pumping:
     //
-    // The new approach keeps a "pending" list of candidates that returned EAGAIN.
-    // After each global round it pumps the event loop once (50 ms) and retries
-    // all pending candidates.  Up to MAX_EAGAIN_ROUNDS × 50 ms ≤ 1 s total.
-    const MAX_EAGAIN_ROUNDS: u32 = 20;
-    let mut eagain_pending: Vec<std::path::PathBuf> = gpu_candidates;
-    'outer: for round in 0..=MAX_EAGAIN_ROUNDS {
-        let mut still_eagain: Vec<std::path::PathBuf> = Vec::new();
-        for gpu_path in eagain_pending {
+    // • EAGAIN: libseat's seat manager hasn't finished processing an earlier
+    //   request — a seat-level condition, not GPU-specific.
+    //
+    // • EACCES/EPERM: On logind-managed sessions (e.g. launched by Ly, greetd)
+    //   the session activation inside logind can lag behind libseat's own
+    //   is_active() flag.  logind's TakeDevice D-Bus call returns EACCES until
+    //   it has fully activated the session on the foreground VT.  Pumping the
+    //   event loop lets the remaining activation messages propagate.
+    //
+    // After each round the loop dispatches the event loop for 50 ms and retries
+    // all still-pending candidates.  Budget: MAX_TRANSIENT_ROUNDS × 50 ms ≈ 2 s.
+    const MAX_TRANSIENT_ROUNDS: u32 = 40;
+    let mut transient_pending: Vec<std::path::PathBuf> = gpu_candidates;
+    'outer: for round in 0..=MAX_TRANSIENT_ROUNDS {
+        let mut still_transient: Vec<std::path::PathBuf> = Vec::new();
+        for gpu_path in transient_pending {
             if round == 0 {
                 info!("Opening DRM device: {:?}", gpu_path);
             }
             match session.open(&gpu_path, open_flags) {
                 Ok(fd) => {
+                    if round > 0 {
+                        info!(gpu = %gpu_path.display(), round, "device opened after transient retries");
+                    }
                     info!(gpu = %gpu_path.display(), "using GPU");
                     chosen_gpu_path = Some(gpu_path);
                     chosen_drm_fd = Some(fd);
@@ -724,41 +752,54 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                 }
                 Err(e) => {
                     let detail = e.to_string();
-                    if is_eagain_message(&detail) {
+                    if is_transient_open_error(&detail) {
                         if round == 0 {
+                            let kind = if is_eagain_message(&detail) {
+                                "EAGAIN"
+                            } else {
+                                "permission denied (transient on logind sessions)"
+                            };
                             info!(
                                 gpu = %gpu_path.display(),
-                                "libseat returned EAGAIN; will retry after event loop pump..."
+                                "libseat returned {kind}; will retry after event loop pump..."
                             );
                         }
-                        still_eagain.push(gpu_path);
+                        still_transient.push(gpu_path);
                     } else {
-                        let is_perm = is_permission_denied_message(&detail);
                         warn!(
                             gpu = %gpu_path.display(),
-                            permission_related = is_perm,
                             round,
-                            "Failed to open DRM device: {detail}"
+                            "Failed to open DRM device (non-transient): {detail}"
                         );
                         open_errors.push(format!("{}: {detail}", gpu_path.display()));
                     }
                 }
             }
         }
-        eagain_pending = still_eagain;
-        if eagain_pending.is_empty() {
+        transient_pending = still_transient;
+        if transient_pending.is_empty() {
             break;
         }
-        if round < MAX_EAGAIN_ROUNDS {
+        if round < MAX_TRANSIENT_ROUNDS {
             let _ = event_loop.dispatch(Some(Duration::from_millis(50)), &mut pre_init);
         } else {
-            // Final round exhausted; record EAGAIN as a permanent failure for
-            // each remaining candidate so the error message is informative.
-            for gpu_path in &eagain_pending {
+            // Final round exhausted; log diagnostics for each remaining candidate.
+            for gpu_path in &transient_pending {
+                let perms_hint = match std::fs::metadata(gpu_path) {
+                    Ok(meta) => {
+                        use std::os::unix::fs::MetadataExt;
+                        format!("(device node mode={:#o}, uid={}, gid={})",
+                                meta.mode(), meta.uid(), meta.gid())
+                    }
+                    Err(e) => format!("(could not stat device: {e})"),
+                };
                 open_errors.push(format!(
-                    "{}: libseat returned EAGAIN after {} retries (seat manager unresponsive?)",
+                    "{}: transient open error persisted after {} retries {}. \
+                     If this is EACCES, ensure Ly's PAM config includes pam_systemd.so \
+                     and the logind session is active (`loginctl session-status`)",
                     gpu_path.display(),
-                    MAX_EAGAIN_ROUNDS,
+                    MAX_TRANSIENT_ROUNDS,
+                    perms_hint,
                 ));
             }
         }
