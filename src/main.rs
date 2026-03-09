@@ -36,7 +36,7 @@ use smithay::{
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
         drm::control::{connector, Device as _, ModeTypeFlags},
-        rustix::fs::{Mode, OFlags},
+        rustix::fs::OFlags,
         wayland_server::{Display, ListeningSocket},
     },
     utils::{Buffer, DeviceFd, Physical, Rectangle, Transform},
@@ -47,7 +47,6 @@ use smithay::{
 use std::path::Path;
 use std::{
     io::Write,
-    thread,
     time::{Duration, Instant},
 };
 use tracing::{error, info, trace, warn};
@@ -83,8 +82,7 @@ struct EventLoopData {
     frame_timestamps: std::collections::HashMap<String, Instant>,
     gles_tex_cache: std::collections::HashMap<String, smithay::backend::renderer::gles::GlesTexture>,
     input_events_pending: bool,
-    #[allow(dead_code)]
-    session: Option<smithay::backend::session::libseat::LibSeatSession>,
+    session: smithay::backend::session::libseat::LibSeatSession,
     active: bool,
     vblank_pending: bool,
     consecutive_flip_failures: u32,
@@ -106,11 +104,33 @@ fn write_flip_failure_report(report: &str) {
     }
 }
 
-fn is_would_block_message(msg: &str) -> bool {
+fn is_permission_denied_message(msg: &str) -> bool {
     let lowered = msg.to_ascii_lowercase();
-    lowered.contains("wouldblock")
-        || lowered.contains("resource temporarily unavailable")
+    lowered.contains("permission denied") || lowered.contains("eacces") || lowered.contains("eperm")
+}
+
+fn is_eagain_message(msg: &str) -> bool {
+    let lowered = msg.to_ascii_lowercase();
+    lowered.contains("resource temporarily unavailable")
         || lowered.contains("eagain")
+        || lowered.contains("wouldblock")
+}
+
+fn enumerate_drm_card_paths() -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir("/dev/dri")
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("card"))
+                .unwrap_or(false)
+        })
+        .collect();
+    paths.sort();
+    paths
 }
 
 fn is_egl_context_or_surface_lost(err: &str) -> bool {
@@ -254,7 +274,7 @@ fn render_frame(data: &mut EventLoopData) {
         data.frame_time
     };
     
-    if data.last_render.elapsed() < adaptive_frame_time {
+    if !data.first_render && data.last_render.elapsed() < adaptive_frame_time {
         return;
     }
     data.last_render = std::time::Instant::now();
@@ -530,122 +550,233 @@ fn render_frame(data: &mut EventLoopData) {
 }
 
 fn run_drm(config: Config) -> Result<(), anyhow::Error> {
-    let mut _session_notifier = None;
-    let mut session = match LibSeatSession::new() {
-        Ok((session, notifier)) => {
-            info!("LibSeat session created successfully");
-            _session_notifier = Some(notifier);
-            Some(session)
-        }
-        Err(err) => {
-            warn!(
-                "Failed to create libseat session: {err}. Falling back to direct DRM open; libinput and VT switching will be disabled"
-            );
-            None
-        }
-    };
+    let (session, session_notifier) = LibSeatSession::new().map_err(|err| {
+        anyhow::anyhow!(
+            "Failed to create libseat session: {err}. wo requires a seat-managed session to access DRM/input devices safely. Run from a proper login session (logind/seatd)."
+        )
+    })?;
+    info!("LibSeat session created successfully");
+    let mut session = session;
 
-    let mut event_loop: EventLoop<()> = EventLoop::try_new().context("creating event loop")?;
+    // Create the event loop early—before opening any DRM devices.
+    // Niri, wlroots, and KWin all register the session notifier on the event
+    // loop before attempting to open device fds. Without this, calloop never
+    // polls the libseat fd, seat.dispatch() is never called, the EnableSeat
+    // message from seatd/logind stays unread, and libseat_open_device()
+    // returns EAGAIN for every attempt.
+    let mut event_loop: EventLoop<Option<EventLoopData>> =
+        EventLoop::try_new().context("creating event loop")?;
     let loop_handle = event_loop.handle();
-    
-    if let Some(notifier) = _session_notifier.take() {
-        loop_handle
-            .insert_source(notifier, |_, _, _: &mut ()| {
-                trace!("Session event during init");
-            })
-            .map_err(|e| anyhow::anyhow!("Error inserting session notifier: {e:?}"))?;
-        info!("Session notifier registered, dispatching initial events");
-        
-        // Dispatch events to ensure session is activated
+    let loop_signal = event_loop.get_signal();
+
+    loop_handle
+        .insert_source(session_notifier, |event, _, data: &mut Option<EventLoopData>| {
+            use smithay::backend::session::Event;
+            let Some(data) = data.as_mut() else {
+                // Pre-init phase: ActivateSession received before DRM setup is
+                // complete. The session is now active; device opening can proceed.
+                return;
+            };
+            match event {
+                Event::PauseSession => {
+                    info!("Session paused (VT switched away). Releasing DRM master and halting rendering.");
+                    data.active = false;
+                    data.vblank_pending = false;
+                    if let Err(e) = drm::Device::release_master_lock(&data.drm_device_fd) {
+                        warn!("Failed to release DRM master on session pause: {e}");
+                    }
+                }
+                Event::ActivateSession => {
+                    info!("Session activated (VT switched back). Re-acquiring DRM master and resuming rendering.");
+                    if let Err(e) = drm::Device::acquire_master_lock(&data.drm_device_fd) {
+                        error!("Failed to re-acquire DRM master on session activation: {e}");
+                        data.active = false;
+                        data.vblank_pending = false;
+                        return;
+                    }
+                    data.active = true;
+                    data.vblank_pending = false;
+                    if let Err(e) = data.display.flush_clients() {
+                        warn!("Failed to flush Wayland clients on activation: {e}");
+                    }
+                    render_frame(data);
+                }
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("Error inserting session notifier: {e:?}"))?;
+    info!("Session notifier registered for VT switching");
+
+    // Dispatch the event loop until the seat is active and ready for device
+    // requests. This must run even when session.is_active() is already true:
+    // LibSeatSession::new() may have set the active flag via an internal
+    // dispatch(0), but calloop still needs to poll the libseat fd at least
+    // once *after* the notifier is registered before open_device() will
+    // succeed. Without this, libseat_open_device() returns EAGAIN immediately.
+    if !session.is_active() {
+        info!("Waiting for seat activation (EnableSeat from seat manager)...");
+    }
+    let mut pre_init: Option<EventLoopData> = None;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
         event_loop
-            .dispatch(Some(std::time::Duration::from_millis(100)), &mut ())
-            .context("initial event dispatch")?;
+            .dispatch(
+                Some(remaining.min(Duration::from_millis(200))),
+                &mut pre_init,
+            )
+            .context("dispatching event loop for session activation")?;
+        if session.is_active() {
+            info!("Session is active, ready to open devices");
+            break;
+        }
+    }
+    if !session.is_active() {
+        return Err(anyhow::anyhow!(
+            "Seat session never became active. \
+             Run wo from a proper TTY login session managed by logind or seatd. \
+             If another compositor holds the seat, switch to a free VT first."
+        ));
     }
 
-    let seat_name = session
-        .as_ref()
-        .map(|s| s.seat())
-        .unwrap_or_else(|| "seat0".to_string());
-    
+    // One unconditional drain after the activation break: the dispatch() call
+    // that set is_active()=true may have left additional buffered libseat events
+    // unread.  A zero-timeout pump clears them so that the first open_device()
+    // request sees a clean state and does not get a spurious EAGAIN.
+    let _ = event_loop.dispatch(Some(Duration::from_millis(0)), &mut pre_init);
+
+    let seat_name = session.seat();
+
     info!("Using seat: {}", seat_name);
 
     let mut display: Display<WoState> = Display::new().context("creating Wayland display")?;
     let dh = display.handle();
 
-    let gpu_path = if let Some(p) = &config.compositor.drm_device {
-        std::path::PathBuf::from(p)
+    let configured_gpu = config
+        .compositor
+        .drm_device
+        .as_ref()
+        .map(std::path::PathBuf::from);
+    let detected_primary_gpu = primary_gpu(&seat_name).ok().flatten();
+
+    let mut gpu_candidates = Vec::new();
+    if let Some(path) = configured_gpu {
+        gpu_candidates.push(path);
     } else {
-        primary_gpu(&seat_name)
-            .ok()
-            .flatten()
-            .context("no primary GPU found")?
-    };
-    
-    info!(gpu = %gpu_path.display(), "using GPU");
+        if let Some(path) = detected_primary_gpu {
+            gpu_candidates.push(path);
+        }
+        for path in enumerate_drm_card_paths() {
+            if !gpu_candidates.iter().any(|p| p == &path) {
+                gpu_candidates.push(path);
+            }
+        }
+    }
 
-    let drm_fd = if let Some(session) = session.as_mut() {
-        info!("Opening DRM device via libseat session: {:?}", gpu_path);
-        let mut last_err = None;
-        let mut opened_fd = None;
-        let max_attempts = 30;
-        let retry_delay = Duration::from_millis(100);
+    if gpu_candidates.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no DRM card candidates found (checked primary GPU and /dev/dri/card*)"
+        ));
+    }
 
-        for attempt in 1..=max_attempts {
-            match session.open(
-                &gpu_path,
-                OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
-            ) {
+    info!(
+        candidates = ?gpu_candidates,
+        "trying DRM devices in priority order"
+    );
+
+    let mut chosen_gpu_path = None;
+    let mut chosen_drm_fd = None;
+    let mut open_errors: Vec<String> = Vec::new();
+
+    // Open DRM in blocking mode. Some drivers can return EAGAIN for
+    // O_NONBLOCK opens even when no other compositor/session owns the device.
+    // libseat already provides asynchronous behavior and transient EAGAIN
+    // handling through the dispatch/retry loop below.
+    let open_flags = OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY;
+
+    // Round-robin EAGAIN retry across all GPU candidates.
+    //
+    // The old per-GPU retry loop had a structural flaw: EAGAIN from libseat is
+    // a seat-level condition (the seat manager hasn't finished processing an
+    // earlier request), not a GPU-level one.  If every candidate gets EAGAIN the
+    // old loop would spend its entire 500 ms budget on the first GPU and then
+    // immediately abandon all remaining ones without any further dispatching.
+    //
+    // The new approach keeps a "pending" list of candidates that returned EAGAIN.
+    // After each global round it pumps the event loop once (50 ms) and retries
+    // all pending candidates.  Up to MAX_EAGAIN_ROUNDS × 50 ms ≤ 1 s total.
+    const MAX_EAGAIN_ROUNDS: u32 = 20;
+    let mut eagain_pending: Vec<std::path::PathBuf> = gpu_candidates;
+    'outer: for round in 0..=MAX_EAGAIN_ROUNDS {
+        let mut still_eagain: Vec<std::path::PathBuf> = Vec::new();
+        for gpu_path in eagain_pending {
+            if round == 0 {
+                info!("Opening DRM device: {:?}", gpu_path);
+            }
+            match session.open(&gpu_path, open_flags) {
                 Ok(fd) => {
-                    info!("Successfully opened DRM device via session, fd={:?}", fd);
-                    opened_fd = Some(fd);
-                    break;
+                    info!(gpu = %gpu_path.display(), "using GPU");
+                    chosen_gpu_path = Some(gpu_path);
+                    chosen_drm_fd = Some(fd);
+                    break 'outer;
                 }
                 Err(e) => {
-                    let err_msg = e.to_string();
-                    if is_would_block_message(&err_msg) && attempt < max_attempts {
+                    let detail = e.to_string();
+                    if is_eagain_message(&detail) {
+                        if round == 0 {
+                            info!(
+                                gpu = %gpu_path.display(),
+                                "libseat returned EAGAIN; will retry after event loop pump..."
+                            );
+                        }
+                        still_eagain.push(gpu_path);
+                    } else {
+                        let is_perm = is_permission_denied_message(&detail);
                         warn!(
-                            attempt,
-                            max_attempts,
                             gpu = %gpu_path.display(),
-                            "DRM device busy (WouldBlock/EAGAIN), retrying open"
+                            permission_related = is_perm,
+                            round,
+                            "Failed to open DRM device: {detail}"
                         );
-                        last_err = Some(err_msg);
-                        thread::sleep(retry_delay);
-                        continue;
+                        open_errors.push(format!("{}: {detail}", gpu_path.display()));
                     }
-                    last_err = Some(err_msg);
-                    break;
                 }
             }
         }
-
-        match opened_fd {
-            Some(fd) => fd,
-            None => {
-                let detail = last_err.unwrap_or_else(|| "unknown error".to_string());
-                error!(
-                    gpu = %gpu_path.display(),
-                    "Failed to open DRM device via session after retries: {detail}"
-                );
-                return Err(anyhow::anyhow!(
-                    "opening DRM device via session failed after retries: {}. This usually means another active compositor/session still owns the seat DRM node.",
-                    detail
+        eagain_pending = still_eagain;
+        if eagain_pending.is_empty() {
+            break;
+        }
+        if round < MAX_EAGAIN_ROUNDS {
+            let _ = event_loop.dispatch(Some(Duration::from_millis(50)), &mut pre_init);
+        } else {
+            // Final round exhausted; record EAGAIN as a permanent failure for
+            // each remaining candidate so the error message is informative.
+            for gpu_path in &eagain_pending {
+                open_errors.push(format!(
+                    "{}: libseat returned EAGAIN after {} retries (seat manager unresponsive?)",
+                    gpu_path.display(),
+                    MAX_EAGAIN_ROUNDS,
                 ));
             }
         }
-    } else {
-        info!("Opening DRM device directly (no session): {:?}", gpu_path);
-        smithay::reexports::rustix::fs::open(
-            &gpu_path,
-            OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
-            Mode::empty(),
+    }
+
+    let gpu_path = chosen_gpu_path.ok_or_else(|| {
+        let detail = if open_errors.is_empty() {
+            "no candidates produced a detailed error".to_string()
+        } else {
+            open_errors.join("; ")
+        };
+        anyhow::anyhow!(
+            "no usable DRM device found. Tried: {detail}. Check for stale holders with: fuser /dev/dri/card*"
         )
-        .context("opening DRM device directly (no session)")?
-    };
+    })?;
+    let drm_fd = chosen_drm_fd.context("no usable DRM device fd found")?;
 
     let drm_device_fd = DrmDeviceFd::new(DeviceFd::from(drm_fd));
-    let (mut drm, _drm_notifier) =
-        DrmDevice::new(drm_device_fd.clone(), true).context("creating DRM device")?;
 
     if let Err(e) = drm::Device::acquire_master_lock(&drm_device_fd) {
         return Err(anyhow::anyhow!(
@@ -653,6 +784,25 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             gpu_path.display()
         ));
     }
+
+    // Try to create DRM device with atomic mode first
+    // If it fails due to invalid state restoration, try without atomic mode
+    let (mut drm, _drm_notifier) = match DrmDevice::new(drm_device_fd.clone(), true) {
+        Ok(result) => {
+            info!("DRM device created in atomic mode");
+            result
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("Invalid argument") || err_msg.contains("EINVAL") {
+                warn!("Atomic mode initialization failed with EINVAL (likely stale state on display), trying legacy mode: {e}");
+                DrmDevice::new(drm_device_fd.clone(), false)
+                    .map_err(|e| anyhow::anyhow!("creating DRM device in legacy mode after atomic failure: {e}"))?
+            } else {
+                return Err(anyhow::anyhow!("creating DRM device: {e}"));
+            }
+        }
+    };
 
     let gbm_device = GbmDevice::new(drm_device_fd.clone()).context("creating GBM device")?;
 
@@ -683,12 +833,20 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         .max_by_key(|m| (m.mode_type().contains(ModeTypeFlags::PREFERRED), m.size()))
         .context("no DRM mode")?;
 
-    let crtc_h = resources
-        .crtcs()
+    let crtc_h = connector_info
+        .encoders()
         .iter()
-        .next()
-        .copied()
-        .context("no suitable CRTC")?;
+        .filter_map(|&encoder_h| drm.get_encoder(encoder_h).ok())
+        .find_map(|encoder_info| encoder_info.crtc())
+        .or_else(|| {
+            connector_info
+                .encoders()
+                .iter()
+                .filter_map(|&encoder_h| drm.get_encoder(encoder_h).ok())
+                .flat_map(|encoder_info| resources.filter_crtcs(encoder_info.possible_crtcs()))
+                .next()
+        })
+        .context("no suitable CRTC for connected connector")?;
 
     let drm_surface = drm
         .create_surface(crtc_h, mode, &[connector_h])
@@ -734,7 +892,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         DrmNode::from_path(&gpu_path).context("resolving DRM node for dmabuf feedback")?;
 
     let mut state = WoState::new(&mut display, config.clone(), render_node, backend);
-    state.can_switch_vt = session.is_some();
+    state.can_switch_vt = true;
 
     let (ipc, msg_rx) = ElectronIpc::listen(&config.compositor.ipc_socket).context("IPC socket")?;
 
@@ -835,17 +993,12 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     let bg = Color32F::from(config.compositor.background);
 
     // Initialize libinput for input events (only when session backend is available)
-    let libinput_backend = if let Some(session_ref) = session.as_ref() {
-        let mut libinput_context =
-            Libinput::new_with_udev(LibinputSessionInterface::from(session_ref.clone()));
-        libinput_context
-            .udev_assign_seat(&session_ref.seat())
-            .map_err(|()| anyhow::anyhow!("Failed to assign seat to libinput"))?;
-        Some(LibinputInputBackend::new(libinput_context))
-    } else {
-        warn!("Running without libinput backend because no session backend is available");
-        None
-    };
+    let mut libinput_context =
+        Libinput::new_with_udev(LibinputSessionInterface::from(session.clone()));
+    libinput_context
+        .udev_assign_seat(&session.seat())
+        .map_err(|()| anyhow::anyhow!("Failed to assign seat to libinput"))?;
+    let libinput_backend = LibinputInputBackend::new(libinput_context);
 
     // Prepare frame pacing using the active DRM mode refresh when available.
     let refresh_hz = (output_mode.refresh as f64) / 1000.0;
@@ -887,12 +1040,6 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         gles_tex_cache: std::collections::HashMap::new(),
     };
 
-    // Create calloop event loop
-    let mut event_loop: EventLoop<EventLoopData> =
-        EventLoop::try_new().context("creating event loop")?;
-    let loop_handle = event_loop.handle();
-    let loop_signal = event_loop.get_signal();
-
     let signal_for_handler = loop_signal.clone();
     ctrlc::set_handler(move || {
         info!("Received Ctrl+C, initiating shutdown");
@@ -900,34 +1047,9 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     })
     .expect("Error setting Ctrl-C handler");
 
-    // 1. Hook up the Session Notifier to handle VT switching!
-    if let Some(notifier) = _session_notifier {
-        loop_handle
-            .insert_source(notifier, |event, _, data: &mut EventLoopData| {
-                use smithay::backend::session::Event;
-                match event {
-                    Event::PauseSession => {
-                        info!("Session paused (VT switched away). Halting rendering.");
-                        data.active = false;
-                        data.vblank_pending = false;
-                    }
-                    Event::ActivateSession => {
-                        info!("Session activated (VT switched back). Resuming rendering.");
-                        data.active = true;
-                        data.vblank_pending = false; // Reset to ensure we can render
-                        if let Err(e) = data.display.flush_clients() {
-                            warn!("Failed to flush Wayland clients on activation: {e}");
-                        }
-                        render_frame(data);          // Force an immediate redraw
-                    }
-                }
-            })
-            .map_err(|e| anyhow::anyhow!("Error inserting session notifier: {e:?}"))?;
-        info!("Session notifier registered for VT switching");
-    }
-
     loop_handle
-        .insert_source(_drm_notifier, |event, _, data: &mut EventLoopData| {
+        .insert_source(_drm_notifier, |event, _, data: &mut Option<EventLoopData>| {
+            let data = data.as_mut().expect("EventLoopData initialized");
             use smithay::backend::drm::DrmEvent;
             if !data.active {
                 if let DrmEvent::VBlank(_) = event {
@@ -945,39 +1067,36 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         .map_err(|e| anyhow::anyhow!("Error inserting DRM notifier: {e:?}"))?;
 
     // Insert libinput backend into event loop (operate on `loop_data.state`)
-    if let Some(libinput_backend) = libinput_backend {
-        loop_handle
-            .insert_source(
-                libinput_backend,
-                move |event, _, data: &mut EventLoopData| {
-                    data.state.process_input_event(event);
-                    data.input_events_pending = true;
-                },
-            )
-            .map_err(|e| anyhow::anyhow!("Error inserting libinput source: {e:?}"))?;
-    }
+    loop_handle
+        .insert_source(
+            libinput_backend,
+            move |event, _, data: &mut Option<EventLoopData>| {
+                let data = data.as_mut().expect("EventLoopData initialized");
+                data.state.process_input_event(event);
+                data.input_events_pending = true;
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("Error inserting libinput source: {e:?}"))?;
 
     // Kickstart the render loop with an initial frame
     info!("Kickstarting VBlank-driven rendering");
     render_frame(&mut loop_data);
 
     // Main event loop - purely event-driven (blocking)
+    let mut main_data: Option<EventLoopData> = Some(loop_data);
     event_loop
-        .run(None, &mut loop_data, |data| {
+        .run(None, &mut main_data, |opt_data| {
+            let data = opt_data.as_mut().expect("EventLoopData initialized");
             if !data.state.running {
                 loop_signal.stop();
                 return;
             }
 
             if let Some(vt) = data.state.pending_vt_switch.take() {
-                if let Some(session) = data.session.as_mut() {
-                    if let Err(e) = session.change_vt(vt as i32) {
-                        warn!(vt, "Failed to switch VT: {e}");
-                    } else {
-                        info!(vt, "Switched to VT");
-                    }
+                if let Err(e) = data.session.change_vt(vt as i32) {
+                    warn!(vt, "Failed to switch VT: {e}");
                 } else {
-                    warn!(vt, "Ignoring VT switch request: no active session backend");
+                    info!(vt, "Switched to VT");
                 }
             }
 

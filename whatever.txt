@@ -1,17 +1,11 @@
-[2m2026-03-09T06:55:04.057372Z[0m [32m INFO[0m [2mwo[0m[2m:[0m wo compositor starting
-[2m2026-03-09T06:55:04.057548Z[0m [32m INFO[0m [2mwo::config[0m[2m:[0m Loading config from "/home/hellings/.config/wo/config.toml"
-[2m2026-03-09T06:55:04.057918Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Running in DRM/KMS mode
-[2m2026-03-09T06:55:04.059240Z[0m [32m INFO[0m [2mwo[0m[2m:[0m LibSeat session created successfully
-[2m2026-03-09T06:55:04.059383Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Session notifier registered, dispatching initial events
-[2m2026-03-09T06:55:04.059468Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Using seat: seat0
-[2m2026-03-09T06:55:04.059874Z[0m [32m INFO[0m [2mwo[0m[2m:[0m using GPU [3mgpu[0m[2m=[0m/dev/dri/card1
-[2m2026-03-09T06:55:04.059895Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Opening DRM device via libseat session: "/dev/dri/card1"
-[2m2026-03-09T06:55:04.060310Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Successfully opened DRM device via session, fd=OwnedFd { fd: 15 }
-[2m2026-03-09T06:55:04.060356Z[0m [33m WARN[0m [2msmithay::backend::drm::device::fd[0m[2m:[0m Unable to become drm master, assuming unprivileged mode
-[2m2026-03-09T06:55:13.132016Z[0m [31mERROR[0m [2msmithay::backend::egl::ffi[0m[2m:[0m [EGL] 0x3003 (BAD_ALLOC) eglQueryDevicesEXT: EGL_BAD_ALLOC error: In eglQueryDevicesEXT: Failed to allocate device list.
-
-[2m2026-03-09T06:55:13.132291Z[0m [31mERROR[0m [2msmithay::backend::egl::ffi[0m[2m:[0m [EGL] 0x3001 (NOT_INITIALIZED) eglInitialize: DRI2: gbm device using incorrect/incompatible backend
-[2m2026-03-09T06:55:13.132304Z[0m [31mERROR[0m [2msmithay::backend::egl::ffi[0m[2m:[0m [EGL] 0x3001 (NOT_INITIALIZED) eglInitialize: DRI2: gbm device using incorrect/incompatible backend
-[2m2026-03-09T06:55:13.132311Z[0m [31mERROR[0m [2msmithay::backend::egl::ffi[0m[2m:[0m [EGL] 0x3001 (NOT_INITIALIZED) eglInitialize: DRI2: gbm device using incorrect/incompatible backend
-[2m2026-03-09T06:55:13.132318Z[0m [31mERROR[0m [2msmithay::backend::egl::ffi[0m[2m:[0m [EGL] 0x3001 (NOT_INITIALIZED) eglInitialize: eglInitialize
-[2m2026-03-09T06:55:13.132487Z[0m [31mERROR[0m [2msmithay::backend::drm::device::atomic[0m[2m:[0m Failed to restore previous state. Error: Invalid argument (os error 22)
+[2m2026-03-09T13:10:06.828981Z[0m [32m INFO[0m [2mwo[0m[2m:[0m wo compositor starting
+[2m2026-03-09T13:10:06.829194Z[0m [32m INFO[0m [2mwo::config[0m[2m:[0m Loading config from "/home/hellings/.config/wo/config.toml"
+[2m2026-03-09T13:10:06.829640Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Running in DRM/KMS mode
+[2m2026-03-09T13:10:06.831907Z[0m [32m INFO[0m [2mwo[0m[2m:[0m LibSeat session created successfully
+[2m2026-03-09T13:10:06.832112Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Session notifier registered for VT switching
+[2m2026-03-09T13:10:06.832217Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Session is active, ready to open devices
+[2m2026-03-09T13:10:06.832243Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Using seat: seat0
+[2m2026-03-09T13:10:06.834656Z[0m [32m INFO[0m [2mwo[0m[2m:[0m trying DRM devices in priority order [3mcandidates[0m[2m=[0m["/dev/dri/card1"]
+[2m2026-03-09T13:10:06.834715Z[0m [32m INFO[0m [2mwo[0m[2m:[0m Opening DRM device: "/dev/dri/card1"
+[2m2026-03-09T13:10:06.835267Z[0m [32m INFO[0m [2mwo[0m[2m:[0m libseat returned EAGAIN; pumping event loop and retrying device open... [3mgpu[0m[2m=[0m/dev/dri/card1
+[2m2026-03-09T13:10:07.351716Z[0m [33m WARN[0m [2mwo[0m[2m:[0m Failed to open DRM device: Failed to open device: Resource temporarily unavailable (os error 11) [3mgpu[0m[2m=[0m/dev/dri/card1 [3mpermission_related[0m[2m=[0mfalse [3mattempt[0m[2m=[0m10
