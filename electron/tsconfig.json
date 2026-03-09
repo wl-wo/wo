@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "ESNext",
+    "lib": ["ES2020"],
+    "moduleResolution": "node",
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "wo-types": ["types/index.ts"],
+      "wo-types/*": ["types/*"]
+    },
+
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+
+    "types": ["bun-types", "node"]
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

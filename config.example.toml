@@ -1,0 +1,21 @@
+[compositor]
+socket_name = "wo-0"
+ipc_socket = "/run/user/1000/wo-ipc.sock"
+electron_path = "electron"
+background = [0.08, 0.10, 0.12, 1.0]
+enable_portal = true
+portal_socket = "/run/user/1000/wo-portal.sock"
+enable_syscalls = true
+focus_notify = true
+
+[[root]]
+name = "main"
+url = "http://localhost:5173"
+fps = 60
+focusable = false
+interactive = false
+
+[[autostart]]
+name = "init-portal"
+command = "wo://portal/start"
+delay = 100

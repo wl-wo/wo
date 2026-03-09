@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=wo
+Comment=wo Wayland Compositor Session
+Exec=wo
+TryExec=wo
+Type=Application
+DesktopNames=wo
+Keywords=wayland;compositor;
+X-GDM-SessionRegisters=true

@@ -1,0 +1,30 @@
+{
+  "name": "wo-electron",
+  "version": "0.1.0",
+  "description": "Electron offscreen renderer for the wo compositor",
+  "type": "module",
+  "main": "dist/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron dist/main.js",
+    "dev": "bun src/main.ts",
+    "build": "bun build src/main.ts src/preload.ts --outdir dist --target node --format esm --external electron",
+    "build-native": "node-gyp rebuild --directory native",
+    "postinstall": "bun run build && bun run build-native"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/electron": "^latest",
+    "@types/node": "^latest",
+    "electron": "^29.0.0",
+    "node-gyp": "^10.0.0",
+    "typescript": "^latest"
+  },
+  "engines": {
+    "bun": ">=1.0.0",
+    "node": ">=18"
+  }
+}
