@@ -227,13 +227,13 @@ export interface Compositor {
   /**
    * Create a damage helper for optimized rendering
    */
-  createDamageHelper?(options: RendererDamageHelperOptions): RendererDamageHelper;
+  createDamageHelper(options: RendererDamageHelperOptions): RendererDamageHelper;
 
   /**
    * Forward a keyboard event from a canvas window to the compositor.
    * evdevKey is the Linux evdev keycode; time is milliseconds.
    */
-  forwardKeyboard?(windowName: string, evdevKey: number, pressed: boolean, time: number): void;
+  forwardKeyboard(windowName: string, evdevKey: number, pressed: boolean, time: number): void;
 
   /**
    * Quit the compositor
@@ -253,35 +253,35 @@ export interface Compositor {
   /**
    * Submit a damaged frame from the renderer
    */
-  submitDamageFrame?(payload: DamageFramePayload): Promise<{ ok: boolean }>;
+  submitDamageFrame(payload: DamageFramePayload): Promise<{ ok: boolean }>;
 
   /**
    * Subscribe to Wayland surface pixel buffer updates from the compositor.
    * The compositor captures each Wayland window's content offscreen and sends
    * raw ARGB8888 pixel data for the client to render.
    */
-  onSurfaceBuffer?(callback: (data: SurfaceBufferData) => void): Unsubscribe;
+  onSurfaceBuffer(callback: (data: SurfaceBufferData) => void): Unsubscribe;
 
   /**
    * Subscribe to notification events from the compositor
    */
-  onNotification?(callback: (data: NotificationData) => void): Unsubscribe;
+  onNotification(callback: (data: NotificationData) => void): Unsubscribe;
 
 
   /**
    * Forward relative mouse motion from the web UI to the compositor.
    */
-  forwardRelativePointer?(windowName: string, dx: number, dy: number): void;
+  forwardRelativePointer(windowName: string, dx: number, dy: number): void;
 
   /**
    * Subscribe to pointer lock requests from the compositor.
    */
-  onPointerLockRequest?(callback: (data: { window: string; lock: boolean }) => void): Unsubscribe;
+  onPointerLockRequest(callback: (data: { window: string; lock: boolean }) => void): Unsubscribe;
 
   /**
    * Subscribe to generic portal requests so clients can provide custom UI.
    */
-  onPortalRequest?(callback: (data: PortalRequestEvent) => void): Unsubscribe;
+  onPortalRequest(callback: (data: PortalRequestEvent) => void): Unsubscribe;
 }
 
 /** Alias for Compositor to match preload.ts imports */
