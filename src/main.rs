@@ -68,6 +68,7 @@ struct EventLoopData {
     msg_rx: tokio::sync::mpsc::Receiver<crate::electron::ElectronMessage>,
     swapchain: Swapchain<GbmAllocator<DrmDeviceFd>>,
     drm_device_fd: DrmDeviceFd,
+    drm: DrmDevice,
     drm_surface: smithay::backend::drm::DrmSurface,
     output_rect: Rectangle<i32, Physical>,
     src_rect: Rectangle<f64, Buffer>,
@@ -86,6 +87,8 @@ struct EventLoopData {
     active: bool,
     vblank_pending: bool,
     consecutive_flip_failures: u32,
+    /// DRI render node path for spawning Electron processes (e.g. `/dev/dri/renderD128`).
+    electron_render_node: String,
 }
 
 const MAX_CONSECUTIVE_FLIP_FAILURES: u32 = 5;
@@ -147,6 +150,37 @@ fn enumerate_drm_card_paths() -> Vec<std::path::PathBuf> {
         .collect();
     paths.sort();
     paths
+}
+
+/// Resolve the DRI render node (e.g. `/dev/dri/renderD128`) that belongs to
+/// the same physical GPU as `card_path` (e.g. `/dev/dri/card1`).
+///
+/// The lookup uses sysfs: `/sys/class/drm/card<N>/device/drm/renderD*`.
+/// Falls back to `/dev/dri/renderD128` if the mapping cannot be determined.
+fn render_node_for_card(card_path: &std::path::Path) -> String {
+    let card_name = card_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("card0");
+    let sys_dir = format!("/sys/class/drm/{card_name}/device/drm");
+    if let Ok(entries) = std::fs::read_dir(&sys_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name();
+            if let Some(s) = name.to_str() {
+                if s.starts_with("renderD") {
+                    let path = format!("/dev/dri/{s}");
+                    info!(card = %card_path.display(), render_node = %path, "resolved render node");
+                    return path;
+                }
+            }
+        }
+    }
+    let fallback = "/dev/dri/renderD128".to_string();
+    warn!(
+        card = %card_path.display(),
+        "could not resolve render node via sysfs, falling back to {fallback}"
+    );
+    fallback
 }
 
 fn is_egl_context_or_surface_lost(err: &str) -> bool {
@@ -509,7 +543,18 @@ fn render_frame(data: &mut EventLoopData) {
         }),
     };
 
-    let result = data.drm_surface.page_flip([plane_state.clone()], true);
+    // Schedule page flip (or full modeset commit for the first frame).
+    // smithay's DrmSurface tracks pending state (mode, connectors). When
+    // commit_pending() is true (e.g. first frame after surface creation or
+    // VT switch), we must use commit() which includes ALLOW_MODESET.
+    // page_flip() only does a non-blocking flip without modesetting and will
+    // fail with EINVAL if the CRTC doesn't have a mode set yet.
+    let result = if data.drm_surface.commit_pending() {
+        info!("Performing initial modeset commit");
+        data.drm_surface.commit([plane_state.clone()], true)
+    } else {
+        data.drm_surface.page_flip([plane_state.clone()], true)
+    };
 
     match result {
         Ok(_) => {
@@ -600,17 +645,15 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             };
             match event {
                 Event::PauseSession => {
-                    info!("Session paused (VT switched away). Releasing DRM master and halting rendering.");
+                    info!("Session paused (VT switched away). Pausing DRM device and halting rendering.");
                     data.active = false;
                     data.vblank_pending = false;
-                    if let Err(e) = drm::Device::release_master_lock(&data.drm_device_fd) {
-                        warn!("Failed to release DRM master on session pause: {e}");
-                    }
+                    data.drm.pause();
                 }
                 Event::ActivateSession => {
-                    info!("Session activated (VT switched back). Re-acquiring DRM master and resuming rendering.");
-                    if let Err(e) = drm::Device::acquire_master_lock(&data.drm_device_fd) {
-                        error!("Failed to re-acquire DRM master on session activation: {e}");
+                    info!("Session activated (VT switched back). Activating DRM device and resuming rendering.");
+                    if let Err(e) = data.drm.activate(false) {
+                        error!("Failed to activate DRM device on session resume: {e}");
                         data.active = false;
                         data.vblank_pending = false;
                         return;
@@ -819,73 +862,28 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
 
     let drm_device_fd = DrmDeviceFd::new(DeviceFd::from(drm_fd));
 
-    // Retry acquiring DRM master: on logind-managed sessions (e.g. Ly) the VT
-    // switch and master hand-off from logind may not be complete at the exact
-    // moment session.open() returns.  libseat's builtin backend logs "Unable to
-    // become DRM master, entering unprivileged mode" and returns the fd anyway;
-    // pumping the event loop lets session-activation events propagate so that
-    // the next drmSetMaster() attempt succeeds.
-    const DRM_MASTER_RETRY_MS: u64 = 100;
-    const DRM_MASTER_RETRY_ROUNDS: u32 = 30; // up to ~3 s
-    let mut last_master_err = None;
-    for round in 0..=DRM_MASTER_RETRY_ROUNDS {
-        match drm::Device::acquire_master_lock(&drm_device_fd) {
-            Ok(()) => {
-                if round > 0 {
-                    info!("DRM master acquired after {} retries", round);
-                }
-                last_master_err = None;
-                break;
-            }
-            Err(e) => {
-                let detail = e.to_string();
-                if round == 0 {
-                    warn!(
-                        gpu = %gpu_path.display(),
-                        "DRM master not yet available ({}); retrying up to {}×{}ms...",
-                        detail,
-                        DRM_MASTER_RETRY_ROUNDS,
-                        DRM_MASTER_RETRY_MS,
-                    );
-                }
-                last_master_err = Some(detail);
-                let _ = event_loop.dispatch(
-                    Some(Duration::from_millis(DRM_MASTER_RETRY_MS)),
-                    &mut pre_init,
-                );
-            }
-        }
-    }
-    if let Some(e) = last_master_err {
-        return Err(anyhow::anyhow!(
-            "failed to become DRM master on {gpu}: {e}. \
-             The GPU is likely in use by another active session/compositor. \
-             Ensure wo is launched as the session compositor by a logind-aware \
-             display manager (e.g. Ly, greetd) with pam_systemd.so in its PAM \
-             config, or switch to a free VT first. \
-             If using seatd, add your user to the 'seat' group.",
-            gpu = gpu_path.display(),
-        ));
-    }
+    // DRM master management: DrmDeviceFd::new() already attempts to acquire
+    // master internally. On logind-managed sessions (Ly, greetd, etc.) this
+    // call typically fails because logind manages master status via TakeDevice.
+    // The fd is still usable for modesetting—logind grants master implicitly.
+    // Following niri's approach: do NOT explicitly call acquire_master_lock()
+    // here. Instead, rely on DrmDevice::pause()/activate() for VT switching,
+    // which checks is_privileged() and skips redundant master management on
+    // logind sessions.
 
-    // Try to create DRM device with atomic mode first
-    // If it fails due to invalid state restoration, try without atomic mode
-    let (mut drm, _drm_notifier) = match DrmDevice::new(drm_device_fd.clone(), true) {
-        Ok(result) => {
-            info!("DRM device created in atomic mode");
-            result
-        }
-        Err(e) => {
-            let err_msg = e.to_string();
-            if err_msg.contains("Invalid argument") || err_msg.contains("EINVAL") {
-                warn!("Atomic mode initialization failed with EINVAL (likely stale state on display), trying legacy mode: {e}");
-                DrmDevice::new(drm_device_fd.clone(), false)
-                    .map_err(|e| anyhow::anyhow!("creating DRM device in legacy mode after atomic failure: {e}"))?
-            } else {
-                return Err(anyhow::anyhow!("creating DRM device: {e}"));
-            }
-        }
-    };
+    // Create the DRM device. The second parameter (`disable_connectors`) is
+    // false following niri's approach: preserve the existing connector state
+    // instead of resetting it. Resetting (true) requires DRM master and can
+    // fail on logind-managed sessions in unprivileged mode.
+    //
+    // Atomic vs legacy modesetting is auto-detected by smithay based on driver
+    // capability. Use SMITHAY_USE_LEGACY=1 to force legacy mode if needed.
+    let (mut drm, _drm_notifier) = DrmDevice::new(drm_device_fd.clone(), false)
+        .map_err(|e| anyhow::anyhow!("creating DRM device: {e}"))?;
+    info!(
+        atomic = drm.is_atomic(),
+        "DRM device created"
+    );
 
     let gbm_device = GbmDevice::new(drm_device_fd.clone()).context("creating GBM device")?;
 
@@ -984,6 +982,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     std::env::set_var("WAYLAND_DISPLAY", &config.compositor.socket_name);
 
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("electron");
+    let electron_render_node = render_node_for_card(&gpu_path);
     // Spawn any root (fullscreen) entries first. Root entries are an
     // alternative to [[windows]] and are mapped to the full output size.
     eprintln!("Root configs: {:#?}", config.root);
@@ -1000,6 +999,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             &config.compositor.electron_path,
             &app_dir,
             &config.compositor.ipc_socket,
+            &electron_render_node,
         ) {
             Ok(proc) => state.electron_processes.push(proc),
             Err(e) => error!(window = %full.name, "failed to spawn Electron root: {e:#}"),
@@ -1012,6 +1012,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             &config.compositor.electron_path,
             &app_dir,
             &config.compositor.ipc_socket,
+            &electron_render_node,
         ) {
             Ok(proc) => state.electron_processes.push(proc),
             Err(e) => error!(window = %win_cfg.name, "failed to spawn Electron: {e:#}"),
@@ -1103,6 +1104,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         msg_rx,
         swapchain,
         drm_device_fd: drm_device_fd.clone(),
+        drm,
         drm_surface,
         output_rect,
         src_rect,
@@ -1121,6 +1123,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         vblank_pending: false,
         consecutive_flip_failures: 0,
         gles_tex_cache: std::collections::HashMap::new(),
+        electron_render_node: electron_render_node,
     };
 
     let signal_for_handler = loop_signal.clone();
@@ -1689,6 +1692,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                                     &data.state.config.compositor.electron_path,
                                     &Path::new(env!("CARGO_MANIFEST_DIR")).join("electron"),
                                     &data.state.config.compositor.ipc_socket,
+                                    &data.electron_render_node,
                                 ) {
                                     Ok(proc) => data.state.electron_processes.push(proc),
                                     Err(e) => {

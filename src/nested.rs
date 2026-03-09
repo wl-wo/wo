@@ -226,6 +226,14 @@ pub fn run_nested(config: Config) -> Result<()> {
     info!("Set WAYLAND_DISPLAY={}", config.compositor.socket_name);
 
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("electron");
+    // Nested mode has no DRM card; use the first available render node.
+    let nested_render_node = std::fs::read_dir("/dev/dri")
+        .ok()
+        .into_iter()
+        .flat_map(|e| e.filter_map(Result::ok))
+        .find(|e| e.file_name().to_str().map_or(false, |n| n.starts_with("renderD")))
+        .map(|e| e.path().to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/dev/dri/renderD128".to_string());
 
     for root_cfg in &config.root {
         let mut full = root_cfg.clone();
@@ -239,6 +247,7 @@ pub fn run_nested(config: Config) -> Result<()> {
             &config.compositor.electron_path,
             &app_dir,
             &config.compositor.ipc_socket,
+            &nested_render_node,
         ) {
             Ok(proc) => state.electron_processes.push(proc),
             Err(e) => error!(window = %full.name, "failed to spawn Electron root: {e:#}"),
@@ -251,6 +260,7 @@ pub fn run_nested(config: Config) -> Result<()> {
             &config.compositor.electron_path,
             &app_dir,
             &config.compositor.ipc_socket,
+            &nested_render_node,
         ) {
             Ok(proc) => state.electron_processes.push(proc),
             Err(e) => error!(window = %win_cfg.name, "failed to spawn Electron: {e:#}"),
@@ -997,11 +1007,20 @@ fn execute_autostart_task(
 
     if let Some(name) = cmd.strip_prefix("wo://window/") {
         if let Some(win_cfg) = state.config.windows.iter().find(|w| w.name == name) {
+            // Best-effort render node for nested autostart
+            let render_node = std::fs::read_dir("/dev/dri")
+                .ok()
+                .into_iter()
+                .flat_map(|e| e.filter_map(Result::ok))
+                .find(|e| e.file_name().to_str().map_or(false, |n| n.starts_with("renderD")))
+                .map(|e| e.path().to_string_lossy().into_owned())
+                .unwrap_or_else(|| "/dev/dri/renderD128".to_string());
             match ElectronProcess::spawn(
                 win_cfg,
                 &state.config.compositor.electron_path,
                 app_dir,
                 &state.config.compositor.ipc_socket,
+                &render_node,
             ) {
                 Ok(proc) => state.electron_processes.push(proc),
                 Err(e) => error!(window = %name, "autostart spawn failed: {e:#}"),

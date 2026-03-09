@@ -518,11 +518,17 @@ pub struct ElectronProcess {
 impl ElectronProcess {
     /// Spawn `electron <app-dir>` for the given window config.
     /// The app dir is resolved to `<config-dir>/wo-electron`.
+    ///
+    /// `render_node` is the DRI render node (e.g. `/dev/dri/renderD128`) that
+    /// matches the GPU the compositor opened.  The native `wo_dmabuf.node`
+    /// module inside Electron uses it to allocate GBM buffers that are
+    /// importable by the compositor's EGL context.
     pub fn spawn(
         config: &WindowConfig,
         electron_bin: &str,
         app_dir: &Path,
         ipc_socket: &str,
+        render_node: &str,
     ) -> Result<Self> {
         use std::process::{Command, Stdio};
         
@@ -533,33 +539,39 @@ impl ElectronProcess {
         
         tracing::info!("Serialized config: {}", serialized);
 
-        //Explicitly specify the main.js entry point
         let main_js = app_dir.join("dist/main.js");
         
         let child = Command::new(electron_bin)
             .arg(&main_js)
             .env("WO_IPC_SOCKET", ipc_socket)
             .env("WO_WINDOW_CONFIG", &serialized)
-            // Force software rendering to avoid Wayland buffer issues
-            .env("DISABLE_GPU_SANDBOX", "1")
-            .env("DISABLE_SOFTWARE_RASTERIZER", "0")
-            // Use XWayland if possible, or X11 if available, fallback to headless
-            .env("DISPLAY", ":0")
-            // Disable Wayland protocol issues
-            .env("QT_QPA_PLATFORM", "offscreen")
-            // Electron needs these flags for proper rendering
-            .arg("--disable-gpu")
-            .arg("--disable-gpu-compositing")
-            .arg("--disable-software-rasterizer=false")
+            .env("WO_DRM_RENDER_NODE", render_node)
+            // Headless Ozone backend: Electron is used purely for offscreen
+            // rendering — it must not try to connect to a Wayland or X11
+            // display server (there is none for it to connect to; *we* are
+            // the compositor).  The headless platform lets Chromium's OSR
+            // paint pipeline work while the native wo_dmabuf module handles
+            // GPU buffer allocation via its own GBM/EGL context on the
+            // render node.
+            .arg("--ozone-platform=headless")
             .arg("--no-sandbox")
             .arg("--disable-gpu-sandbox")
+            // Use the *software* GL implementation inside Chromium for its
+            // own compositing (we do not need hardware-accelerated web
+            // content — the paint callback gives us BGRA bitmaps that the
+            // native module imports into a GBM BO).  This avoids Chromium
+            // fighting with the compositor over the DRM render node.
+            .arg("--use-gl=swiftshader")
+            // Make sure OSR (offscreen) rendering actually produces
+            // paint callbacks at the requested frame rate.
+            .arg("--enable-features=Vulkan")
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .with_context(|| format!("spawning electron for window '{}'", config.name))?;
 
-        info!(window = %config.name, pid = child.id(), "spawned Electron process");
+        info!(window = %config.name, pid = child.id(), render_node, "spawned Electron process");
 
         Ok(Self {
             name: config.name.clone(),
