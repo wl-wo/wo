@@ -778,10 +778,52 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
 
     let drm_device_fd = DrmDeviceFd::new(DeviceFd::from(drm_fd));
 
-    if let Err(e) = drm::Device::acquire_master_lock(&drm_device_fd) {
+    // Retry acquiring DRM master: on logind-managed sessions (e.g. Ly) the VT
+    // switch and master hand-off from logind may not be complete at the exact
+    // moment session.open() returns.  libseat's builtin backend logs "Unable to
+    // become DRM master, entering unprivileged mode" and returns the fd anyway;
+    // pumping the event loop lets session-activation events propagate so that
+    // the next drmSetMaster() attempt succeeds.
+    const DRM_MASTER_RETRY_MS: u64 = 100;
+    const DRM_MASTER_RETRY_ROUNDS: u32 = 30; // up to ~3 s
+    let mut last_master_err = None;
+    for round in 0..=DRM_MASTER_RETRY_ROUNDS {
+        match drm::Device::acquire_master_lock(&drm_device_fd) {
+            Ok(()) => {
+                if round > 0 {
+                    info!("DRM master acquired after {} retries", round);
+                }
+                last_master_err = None;
+                break;
+            }
+            Err(e) => {
+                let detail = e.to_string();
+                if round == 0 {
+                    warn!(
+                        gpu = %gpu_path.display(),
+                        "DRM master not yet available ({}); retrying up to {}×{}ms...",
+                        detail,
+                        DRM_MASTER_RETRY_ROUNDS,
+                        DRM_MASTER_RETRY_MS,
+                    );
+                }
+                last_master_err = Some(detail);
+                let _ = event_loop.dispatch(
+                    Some(Duration::from_millis(DRM_MASTER_RETRY_MS)),
+                    &mut pre_init,
+                );
+            }
+        }
+    }
+    if let Some(e) = last_master_err {
         return Err(anyhow::anyhow!(
-            "failed to become DRM master on {}: {e}. The GPU is likely in use by another active session/compositor. Switch to a free VT, stop the other session, or set compositor.drm_device to a free card.",
-            gpu_path.display()
+            "failed to become DRM master on {gpu}: {e}. \
+             The GPU is likely in use by another active session/compositor. \
+             Ensure wo is launched as the session compositor by a logind-aware \
+             display manager (e.g. Ly, greetd) with pam_systemd.so in its PAM \
+             config, or switch to a free VT first. \
+             If using seatd, add your user to the 'seat' group.",
+            gpu = gpu_path.display(),
         ));
     }
 

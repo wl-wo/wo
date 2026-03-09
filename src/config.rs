@@ -246,10 +246,17 @@ impl ApplicationConfig {
 // Defaults
 
 fn default_socket_name() -> String { "wo-0".into() }
-fn default_ipc_socket()  -> String { "/run/user/1000/wo-ipc.sock".into() }
 fn default_electron_path() -> String { "electron".into() }
 fn default_background()  -> [f32; 4] { [0.1, 0.1, 0.1, 1.0] }
-fn default_portal_socket() -> String { "/run/user/1000/wo-portal.sock".into() }
+
+/// Returns $XDG_RUNTIME_DIR, falling back to /run/user/<uid>.
+fn runtime_dir() -> String {
+    std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }))
+}
+
+fn default_ipc_socket()    -> String { format!("{}/wo-ipc.sock",    runtime_dir()) }
+fn default_portal_socket() -> String { format!("{}/wo-portal.sock", runtime_dir()) }
 fn default_width()       -> u32 { 1920 }
 fn default_height()      -> u32 { 1080 }
 fn default_nested_width() -> u32 { 1920 }
@@ -258,6 +265,12 @@ fn default_fps()         -> u32 { 60 }
 fn default_format()      -> String { "ARGB8888".into() }
 fn default_asset_prefix() -> String { "file".into() }
 fn default_true()        -> bool { true }
+
+fn expand_path(s: &str) -> String {
+    shellexpand::full(s)
+        .map(|cow| cow.into_owned())
+        .unwrap_or_else(|_| s.to_owned())
+}
 
 impl Config {
     pub fn load() -> Result<Self> {
@@ -278,8 +291,13 @@ impl Config {
                 let text = std::fs::read_to_string(&path_opt)
                     .with_context(|| format!("reading config {path_opt:?}"))?;
 
-                return toml::from_str(&text)
-                    .with_context(|| format!("parsing config {path_opt:?}"));
+                let mut config: Self = toml::from_str(&text)
+                    .with_context(|| format!("parsing config {path_opt:?}"))?;
+                config.compositor.ipc_socket =
+                    expand_path(&config.compositor.ipc_socket);
+                config.compositor.portal_socket =
+                    expand_path(&config.compositor.portal_socket);
+                return Ok(config);
             }
         }
 

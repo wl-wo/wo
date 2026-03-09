@@ -1,10 +1,10 @@
 [compositor]
 socket_name = "wo-0"
-ipc_socket = "/run/user/1000/wo-ipc.sock"
+ipc_socket = "$XDG_RUNTIME_DIR/wo-ipc.sock"
 electron_path = "electron"
 background = [0.08, 0.10, 0.12, 1.0]
 enable_portal = true
-portal_socket = "/run/user/1000/wo-portal.sock"
+portal_socket = "$XDG_RUNTIME_DIR/wo-portal.sock"
 enable_syscalls = true
 focus_notify = true
 
