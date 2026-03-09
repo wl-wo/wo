@@ -86,9 +86,13 @@ struct EventLoopData {
     session: smithay::backend::session::libseat::LibSeatSession,
     active: bool,
     vblank_pending: bool,
+    /// When vblank_pending was first set; used to detect stuck vblank state.
+    vblank_since: Option<Instant>,
     consecutive_flip_failures: u32,
     /// DRI render node path for spawning Electron processes (e.g. `/dev/dri/renderD128`).
     electron_render_node: String,
+    /// Total successful page flips (for startup diagnostics).
+    total_flips: u64,
 }
 
 const MAX_CONSECUTIVE_FLIP_FAILURES: u32 = 5;
@@ -307,14 +311,32 @@ fn main() -> Result<(), anyhow::Error> {
 
 /// Render a single frame - called by VBlank events
 fn render_frame(data: &mut EventLoopData) {
-    // Bail if session is paused (VT switched away) or a page flip is pending
+    // Bail if session is paused (VT switched away)
     if !data.active {
         trace!("Skipping render: session inactive");
         return;
     }
+
+    // Vblank-pending gate: skip if a page flip is outstanding.
+    // Safety net: if vblank_pending has been stuck for >500ms, the VBlank event
+    // was likely lost (e.g. during DRM master transitions). Force-clear so
+    // rendering can resume.
     if data.vblank_pending {
-        trace!("Skipping render: vblank pending");
-        return;
+        if let Some(since) = data.vblank_since {
+            if since.elapsed() > Duration::from_millis(500) {
+                warn!(
+                    "vblank_pending stuck for {:?} (total_flips={}), force-clearing",
+                    since.elapsed(),
+                    data.total_flips,
+                );
+                data.vblank_pending = false;
+                data.vblank_since = None;
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
     }
 
     // Frame pacing: respect adaptive timing for input responsiveness
@@ -330,8 +352,14 @@ fn render_frame(data: &mut EventLoopData) {
     data.last_render = std::time::Instant::now();
     data.input_events_pending = false;
 
-    // First render: mark all windows damaged
+    // First render: mark all windows damaged and log diagnostic state
     if data.first_render {
+        info!(
+            "First render: output={}x{}, windows={}, bg={:?}",
+            data.width, data.height,
+            data.state.config.windows.len(),
+            data.bg,
+        );
         for win_cfg in &data.state.config.windows {
             data.state.damaged_windows.insert(win_cfg.name.clone());
         }
@@ -341,7 +369,12 @@ fn render_frame(data: &mut EventLoopData) {
     // Acquire swapchain slot
     let slot = match data.swapchain.acquire() {
         Ok(Some(slot)) => slot,
-        Ok(None) => return,
+        Ok(None) => {
+            if data.total_flips == 0 {
+                warn!("Swapchain: no free slots on first frame");
+            }
+            return;
+        }
         Err(e) => {
             warn!("Error acquiring swapchain slot: {e}");
             return;
@@ -508,7 +541,9 @@ fn render_frame(data: &mut EventLoopData) {
     })();
 
     if !render_ok {
-        trace!("Rendering failed, skipping page flip");
+        if data.total_flips == 0 {
+            warn!("Rendering failed on first frame, skipping page flip");
+        }
         data.swapchain.submitted(&slot);
         data.state.damaged_windows.clear();
         if context_lost {
@@ -543,16 +578,24 @@ fn render_frame(data: &mut EventLoopData) {
         }),
     };
 
+    let tex_count = data.gles_tex_cache.len();
+
     // Schedule page flip (or full modeset commit for the first frame).
     // smithay's DrmSurface tracks pending state (mode, connectors). When
     // commit_pending() is true (e.g. first frame after surface creation or
     // VT switch), we must use commit() which includes ALLOW_MODESET.
     // page_flip() only does a non-blocking flip without modesetting and will
     // fail with EINVAL if the CRTC doesn't have a mode set yet.
-    let result = if data.drm_surface.commit_pending() {
-        info!("Performing initial modeset commit");
+    let commit_pending = data.drm_surface.commit_pending();
+    let result = if commit_pending {
+        info!("Performing initial modeset commit (textures={})", tex_count);
         data.drm_surface.commit([plane_state.clone()], true)
     } else {
+        // On the very first page_flip (no prior flips), log at INFO level
+        // so we can confirm the rendering pipeline is working.
+        if data.total_flips == 0 {
+            info!("First page_flip (commit_pending=false, textures={})", tex_count);
+        }
         data.drm_surface.page_flip([plane_state.clone()], true)
     };
 
@@ -560,6 +603,11 @@ fn render_frame(data: &mut EventLoopData) {
         Ok(_) => {
             data.consecutive_flip_failures = 0;
             data.vblank_pending = true;
+            data.vblank_since = Some(Instant::now());
+            data.total_flips += 1;
+            if data.total_flips == 1 {
+                info!("First successful page flip (commit_pending={})", commit_pending);
+            }
         }
         Err(e) => {
             data.consecutive_flip_failures = data.consecutive_flip_failures.saturating_add(1);
@@ -589,6 +637,7 @@ fn render_frame(data: &mut EventLoopData) {
                 );
                 write_flip_failure_report(&commit_report);
                 data.vblank_pending = false;
+                data.vblank_since = None;
                 if data.consecutive_flip_failures >= MAX_CONSECUTIVE_FLIP_FAILURES {
                     let report = format!(
                         "Exceeded consecutive DRM flip failures ({}). Last page_flip error: {e}; last commit error: {commit_err}. Exiting compositor.",
@@ -604,6 +653,8 @@ fn render_frame(data: &mut EventLoopData) {
             } else {
                 data.consecutive_flip_failures = 0;
                 data.vblank_pending = true;
+                data.vblank_since = Some(Instant::now());
+                data.total_flips += 1;
             }
         }
     }
@@ -648,6 +699,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                     info!("Session paused (VT switched away). Pausing DRM device and halting rendering.");
                     data.active = false;
                     data.vblank_pending = false;
+                    data.vblank_since = None;
                     data.drm.pause();
                 }
                 Event::ActivateSession => {
@@ -656,10 +708,12 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                         error!("Failed to activate DRM device on session resume: {e}");
                         data.active = false;
                         data.vblank_pending = false;
+                        data.vblank_since = None;
                         return;
                     }
                     data.active = true;
                     data.vblank_pending = false;
+                    data.vblank_since = None;
                     if let Err(e) = data.display.flush_clients() {
                         warn!("Failed to flush Wayland clients on activation: {e}");
                     }
@@ -1121,9 +1175,11 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         session,
         active: true,
         vblank_pending: false,
+        vblank_since: None,
         consecutive_flip_failures: 0,
         gles_tex_cache: std::collections::HashMap::new(),
         electron_render_node: electron_render_node,
+        total_flips: 0,
     };
 
     let signal_for_handler = loop_signal.clone();
@@ -1140,6 +1196,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             if !data.active {
                 if let DrmEvent::VBlank(_) = event {
                     data.vblank_pending = false;
+                    data.vblank_since = None;
                 }
                 trace!("Ignoring DRM event while session is inactive");
                 return;
@@ -1147,6 +1204,7 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             if let DrmEvent::VBlank(_) = event {
                 // The screen just refreshed! We are clear to render the next frame.
                 data.vblank_pending = false;
+                data.vblank_since = None;
                 render_frame(data);
             }
         })
@@ -1274,14 +1332,23 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             // Import latest frames
             for (_name, frame) in latest_frames {
                 let frame_name = frame.name.clone();
+                let frame_dims = (frame.width, frame.height);
                 if let Some(renderer_arc) = data.state.backend.renderer() {
                     match renderer_arc.lock() {
                         Ok(ref mut renderer) => {
                             match import_electron_frame(renderer, frame) {
                                 Ok((tex, cached)) => {
+                                    let is_first = !data.gles_tex_cache.contains_key(&frame_name);
                                     data.state.damaged_windows.insert(frame_name.clone());
                                     data.state.texture_cache.insert_dmabuf(cached);
-                                    data.gles_tex_cache.insert(frame_name, tex.texture);
+                                    data.gles_tex_cache.insert(frame_name.clone(), tex.texture);
+                                    if is_first {
+                                        info!(
+                                            "First DMABUF imported for '{}' ({}x{}, total_textures={})",
+                                            frame_name, frame_dims.0, frame_dims.1,
+                                            data.gles_tex_cache.len(),
+                                        );
+                                    }
                                 }
                                 Err(e) => warn!("DMABUF import failed for '{}': {e:#}", frame_name),
                             }

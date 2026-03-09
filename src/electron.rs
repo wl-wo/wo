@@ -810,6 +810,18 @@ fn handle_connection(
     });
     clients.lock().unwrap().insert(name.clone(), client.clone());
 
+    // Clear the handshake-only SO_RCVTIMEO so the reader thread blocks
+    // indefinitely between messages. A static web page may produce no paint
+    // events for many seconds; a 5-second timeout would incorrectly kill the
+    // connection during these normal idle periods.
+    {
+        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+        let no_timeout = TimeVal::new(0, 0);
+        if let Err(e) = setsockopt(&borrowed, ReceiveTimeout, &no_timeout) {
+            warn!("Failed to clear SO_RCVTIMEO on IPC socket: {e}");
+        }
+    }
+
     // 2. Stream Messages (frames, syscalls, positions, etc.)
     let mut msg_count = 0u32;
     loop {
