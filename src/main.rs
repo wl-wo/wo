@@ -1585,6 +1585,60 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         ListeningSocket::bind(&config.compositor.socket_name).context("binding Wayland socket")?;
     info!(socket = %config.compositor.socket_name, "Wayland socket bound");
 
+    // Register the Wayland display fd with calloop so that client messages
+    // (surface commits, etc.) wake the event loop.  Without this, the loop
+    // only wakes on DRM VBlank / libinput / session events and rendering
+    // stalls when the VBlank cycle breaks.
+    {
+        use std::os::unix::io::AsFd;
+        let display_fd = display.as_fd().try_clone_to_owned()
+            .context("duping Wayland display fd for calloop")?;
+        let wayland_display_source = calloop::generic::Generic::new(
+            display_fd,
+            calloop::Interest::READ,
+            calloop::Mode::Level,
+        );
+        loop_handle
+            .insert_source(wayland_display_source, |_, _, _: &mut DrmLoopData| {
+                Ok(calloop::PostAction::Continue)
+            })
+            .map_err(|e| anyhow::anyhow!("Error inserting Wayland display source: {e:?}"))?;
+        info!("Wayland display fd registered with calloop");
+    }
+
+    // Register the listening socket fd so new client connections also wake
+    // the event loop promptly.
+    {
+        use std::os::unix::io::AsFd;
+        let listen_fd = wayland_socket.as_fd().try_clone_to_owned()
+            .context("duping Wayland listening socket fd for calloop")?;
+        let listen_source = calloop::generic::Generic::new(
+            listen_fd,
+            calloop::Interest::READ,
+            calloop::Mode::Level,
+        );
+        loop_handle
+            .insert_source(listen_source, |_, _, _: &mut DrmLoopData| {
+                Ok(calloop::PostAction::Continue)
+            })
+            .map_err(|e| anyhow::anyhow!("Error inserting Wayland listen source: {e:?}"))?;
+        info!("Wayland listening socket registered with calloop");
+    }
+
+    // Periodic render timer: safety net to restart stalled VBlank cycles.
+    // If the VBlank rendering cycle breaks (e.g. transient page-flip failure),
+    // this timer ensures the event loop wakes up and render_frame gets a
+    // chance to restart the cycle, even with no input or client activity.
+    {
+        let render_timer = calloop::timer::Timer::from_duration(frame_time);
+        loop_handle
+            .insert_source(render_timer, move |_deadline, _, _: &mut DrmLoopData| {
+                calloop::timer::TimeoutAction::ToDuration(frame_time)
+            })
+            .map_err(|e| anyhow::anyhow!("Error inserting render timer: {e:?}"))?;
+        info!(?frame_time, "Periodic render timer registered");
+    }
+
     // Move all state into EventLoopData for access in event loop callbacks
     let mut loop_data = EventLoopData {
         display,
