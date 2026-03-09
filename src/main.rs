@@ -13,6 +13,8 @@ use calloop::EventLoop;
 use gbm::Modifier;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use smithay::backend::allocator::Fourcc;
+
+use smithay::backend::renderer::element::{Element, RenderElement};
 use smithay::wayland::xdg_activation::{XdgActivationToken, XdgActivationTokenData};
 use smithay::{
     backend::{
@@ -39,14 +41,16 @@ use smithay::{
     },
     utils::{Buffer, DeviceFd, Physical, Rectangle, Transform},
     wayland::{
-        seat::WaylandFocus, xdg_activation::XdgActivationHandler,
+        xdg_activation::XdgActivationHandler,
     },
 };
 use std::path::Path;
 use std::{
+    io::Write,
+    thread,
     time::{Duration, Instant},
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub mod state;
@@ -77,7 +81,36 @@ struct EventLoopData {
     first_render: bool,
     wayland_socket: ListeningSocket,
     frame_timestamps: std::collections::HashMap<String, Instant>,
+    gles_tex_cache: std::collections::HashMap<String, smithay::backend::renderer::gles::GlesTexture>,
     input_events_pending: bool,
+    #[allow(dead_code)]
+    session: Option<smithay::backend::session::libseat::LibSeatSession>,
+    active: bool,
+    vblank_pending: bool,
+    consecutive_flip_failures: u32,
+}
+
+const MAX_CONSECUTIVE_FLIP_FAILURES: u32 = 5;
+
+fn write_flip_failure_report(report: &str) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/wo-compositor-fatal.log")
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(file, "[{ts}] {report}");
+    }
+}
+
+fn is_would_block_message(msg: &str) -> bool {
+    let lowered = msg.to_ascii_lowercase();
+    lowered.contains("wouldblock")
+        || lowered.contains("resource temporarily unavailable")
+        || lowered.contains("eagain")
 }
 
 fn is_egl_context_or_surface_lost(err: &str) -> bool {
@@ -88,6 +121,72 @@ fn is_egl_context_or_surface_lost(err: &str) -> bool {
         || lowered.contains("not current draw surface")
         || lowered.contains("egl_bad_alloc")
         || lowered.contains("failed to allocate resources")
+}
+
+fn reinitialize_renderer(data: &mut EventLoopData) -> bool {
+    let gbm_device = match GbmDevice::new(data.drm_device_fd.clone()) {
+        Ok(device) => device,
+        Err(e) => {
+            error!("Failed to recreate GBM device after context loss: {e}");
+            return false;
+        }
+    };
+
+    let egl_display = match unsafe { EGLDisplay::new(gbm_device) } {
+        Ok(display) => display,
+        Err(e) => {
+            error!("Failed to recreate EGL display after context loss: {e}");
+            return false;
+        }
+    };
+
+    let egl_context = match EGLContext::new(&egl_display) {
+        Ok(context) => context,
+        Err(e) => {
+            error!("Failed to recreate EGL context after context loss: {e}");
+            return false;
+        }
+    };
+
+    let new_renderer = match unsafe { GlesRenderer::new(egl_context) } {
+        Ok(renderer) => renderer,
+        Err(e) => {
+            error!("Failed to recreate GLES renderer after context loss: {e}");
+            return false;
+        }
+    };
+
+    let renderer_arc = match data.state.backend.renderer() {
+        Some(arc) => arc,
+        None => {
+            error!("Renderer backend is missing during context-loss recovery");
+            return false;
+        }
+    };
+
+    match renderer_arc.lock() {
+        Ok(mut renderer) => {
+            *renderer = new_renderer;
+        }
+        Err(e) => {
+            error!("Failed to lock renderer during context-loss recovery: {e}");
+            return false;
+        }
+    }
+
+    data.gles_tex_cache.clear();
+    data.state.texture_cache = crate::dmabuf::TextureCache::default();
+    data.state.damaged_windows.extend(
+        data.state
+            .config
+            .windows
+            .iter()
+            .map(|window| window.name.clone()),
+    );
+    data.first_render = true;
+    data.vblank_pending = false;
+    info!("Successfully reinitialized renderer after EGL context loss");
+    true
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -136,9 +235,308 @@ fn main() -> Result<(), anyhow::Error> {
     run_drm(config)
 }
 
+/// Render a single frame - called by VBlank events
+fn render_frame(data: &mut EventLoopData) {
+    // Bail if session is paused (VT switched away) or a page flip is pending
+    if !data.active {
+        trace!("Skipping render: session inactive");
+        return;
+    }
+    if data.vblank_pending {
+        trace!("Skipping render: vblank pending");
+        return;
+    }
+
+    // Frame pacing: respect adaptive timing for input responsiveness
+    let adaptive_frame_time = if data.input_events_pending {
+        Duration::from_millis(8)
+    } else {
+        data.frame_time
+    };
+    
+    if data.last_render.elapsed() < adaptive_frame_time {
+        return;
+    }
+    data.last_render = std::time::Instant::now();
+    data.input_events_pending = false;
+
+    // First render: mark all windows damaged
+    if data.first_render {
+        for win_cfg in &data.state.config.windows {
+            data.state.damaged_windows.insert(win_cfg.name.clone());
+        }
+        data.first_render = false;
+    }
+
+    // Acquire swapchain slot
+    let slot = match data.swapchain.acquire() {
+        Ok(Some(slot)) => slot,
+        Ok(None) => return,
+        Err(e) => {
+            warn!("Error acquiring swapchain slot: {e}");
+            return;
+        }
+    };
+
+    let mut target_dmabuf = match slot.export() {
+        Ok(dmabuf) => dmabuf,
+        Err(e) => {
+            warn!("Error exporting swapchain dmabuf: {e}");
+            data.swapchain.submitted(&slot);
+            return;
+        }
+    };
+
+    // Perform actual rendering
+    let mut context_lost = false;
+    let render_ok = (|| {
+        let renderer_arc = match data.state.backend.renderer() {
+            Some(arc) => arc,
+            None => {
+                warn!("No renderer available");
+                return false;
+            }
+        };
+        let mut renderer_guard = match renderer_arc.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                warn!("Failed to lock renderer: {e}");
+                return false;
+            }
+        };
+
+        let renderer: &mut GlesRenderer = &mut renderer_guard;
+
+        // Prepare Wayland surface elements before starting the frame
+        use smithay::backend::renderer::element::{surface::render_elements_from_surface_tree, surface::WaylandSurfaceRenderElement, Kind, RenderElement};
+        use smithay::utils::Scale as ScaleF;
+        
+        let scale = ScaleF::from(1.0);
+        let mut wayland_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = Vec::new();
+        
+        for window in data.state.space.elements() {
+            if let Some(location) = data.state.space.element_location(window) {
+                let surface = window.toplevel()
+                    .map(|t| t.wl_surface().clone())
+                    .or_else(|| window.x11_surface().and_then(|x| x.wl_surface().clone()));
+                
+                if let Some(surface) = surface {
+                    let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(
+                        renderer,
+                        &surface,
+                        (location.x, location.y),
+                        scale,
+                        1.0,
+                        Kind::Unspecified,
+                    );
+                    
+                    for element in elements {
+                        wayland_elements.push(element);
+                    }
+                }
+            }
+        }
+
+        let mut target = match renderer.bind(&mut target_dmabuf) {
+            Ok(t) => t,
+            Err(e) => {
+                warn!("Failed to bind renderer to dmabuf: {e}");
+                return false;
+            }
+        };
+
+        let mut frame = match renderer.render(
+            &mut target,
+            data.output_rect.size,
+            Transform::Normal,
+        ) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("Failed to start frame: {e}");
+                return false;
+            }
+        };
+
+        if let Err(e) = frame.clear(data.bg, &[data.output_rect]) {
+            warn!("Clear failed: {e}");
+            return false;
+        }
+
+        // Render Electron window textures
+        for win_cfg in &data.state.config.windows {
+            if let Some(texture) = data.gles_tex_cache.get(&win_cfg.name) {
+                let (x, y, _w, _h) = data.state
+                    .window_positions
+                    .get(&win_cfg.name)
+                    .copied()
+                    .unwrap_or((win_cfg.x, win_cfg.y, win_cfg.width, win_cfg.height));
+
+                let mapped = data.state.window_mapped.get(&win_cfg.name).copied().unwrap_or(true);
+                if !mapped {
+                    continue;
+                }
+
+                if let Err(e) = frame.render_texture_at(
+                    texture,
+                    (x, y).into(),
+                    1,
+                    1.0,
+                    Transform::Normal,
+                    &[data.output_rect],
+                    &[],
+                    1.0,
+                ) {
+                    if is_egl_context_or_surface_lost(&e.to_string()) {
+                        error!("EGL context lost while rendering Electron texture");
+                        context_lost = true;
+                        return false;
+                    }
+                    warn!("Electron texture rendering failed for {}: {e}", win_cfg.name);
+                }
+            }
+        }
+
+        for element in wayland_elements {
+            let src = element.src();
+            let dst = element.geometry(scale);
+            if let Err(e) = element.draw(&mut frame, src, dst, &[data.output_rect], &[]) {
+                if is_egl_context_or_surface_lost(&e.to_string()) {
+                    error!("EGL context lost during space rendering");
+                    context_lost = true;
+                    return false;
+                }
+                trace!("Element rendering failed: {e}");
+            }
+        }
+
+        // Send frame callbacks
+        let presented_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+
+        for window in data.state.space.elements() {
+            window.send_frame(
+                &data.state.backend.output,
+                presented_at,
+                Some(data.frame_time),
+                |_, _| Some(data.state.backend.output.clone()),
+            );
+        }
+
+        let dirty_surfaces: Vec<_> = data.state.dirty_surfaces.drain().collect();
+        for surface in dirty_surfaces {
+            smithay::desktop::utils::send_frames_surface_tree(
+                &surface,
+                &data.state.backend.output,
+                presented_at,
+                Some(data.frame_time),
+                |_, _| Some(data.state.backend.output.clone()),
+            );
+        }
+
+        true
+    })();
+
+    if !render_ok {
+        trace!("Rendering failed, skipping page flip");
+        data.swapchain.submitted(&slot);
+        data.state.damaged_windows.clear();
+        if context_lost {
+            let _ = reinitialize_renderer(data);
+        }
+        return;
+    }
+
+    data.state.damaged_windows.clear();
+    data.state.dirty_surfaces.clear();
+
+    // Create framebuffer and schedule page flip
+    let fb = match framebuffer_from_bo(&data.drm_device_fd, &slot, false) {
+        Ok(fb) => fb,
+        Err(e) => {
+            warn!("Error creating framebuffer: {e}");
+            data.swapchain.submitted(&slot);
+            return;
+        }
+    };
+
+    let plane_state = PlaneState {
+        handle: data.drm_surface.plane(),
+        config: Some(PlaneConfig {
+            src: data.src_rect,
+            dst: data.output_rect,
+            transform: Transform::Normal,
+            alpha: 1.0,
+            damage_clips: None,
+            fb: *fb.as_ref(),
+            fence: None,
+        }),
+    };
+
+    let result = data.drm_surface.page_flip([plane_state.clone()], true);
+
+    match result {
+        Ok(_) => {
+            data.consecutive_flip_failures = 0;
+            data.vblank_pending = true;
+        }
+        Err(e) => {
+            data.consecutive_flip_failures = data.consecutive_flip_failures.saturating_add(1);
+            let page_flip_err = e.to_string();
+            let would_block = {
+                let lowered = page_flip_err.to_ascii_lowercase();
+                lowered.contains("wouldblock")
+                    || lowered.contains("resource temporarily unavailable")
+                    || lowered.contains("eagain")
+            };
+
+            let page_flip_report = format!(
+                "DRM page_flip failed (count={}): {}{}",
+                data.consecutive_flip_failures,
+                page_flip_err,
+                if would_block { " [WouldBlock/EAGAIN]" } else { "" }
+            );
+            warn!("{page_flip_report}. Attempting forced commit.");
+            write_flip_failure_report(&page_flip_report);
+
+            if let Err(commit_err) = data.drm_surface.commit([plane_state], true) {
+                error!("Fatal DRM failure: {commit_err}");
+                let commit_report = format!(
+                    "DRM commit failed after page_flip failure (count={}): {}",
+                    data.consecutive_flip_failures,
+                    commit_err
+                );
+                write_flip_failure_report(&commit_report);
+                data.vblank_pending = false;
+                if data.consecutive_flip_failures >= MAX_CONSECUTIVE_FLIP_FAILURES {
+                    let report = format!(
+                        "Exceeded consecutive DRM flip failures ({}). Last page_flip error: {e}; last commit error: {commit_err}. Exiting compositor.",
+                        data.consecutive_flip_failures
+                    );
+                    error!("{report}");
+                    write_flip_failure_report(&report);
+                    data.active = false;
+                    data.state.running = false;
+                    data.swapchain.submitted(&slot);
+                    return;
+                }
+            } else {
+                data.consecutive_flip_failures = 0;
+                data.vblank_pending = true;
+            }
+        }
+    }
+    data.swapchain.submitted(&slot);
+}
+
 fn run_drm(config: Config) -> Result<(), anyhow::Error> {
+    let mut _session_notifier = None;
     let mut session = match LibSeatSession::new() {
-        Ok((session, _notifier)) => Some(session),
+        Ok((session, notifier)) => {
+            info!("LibSeat session created successfully");
+            _session_notifier = Some(notifier);
+            Some(session)
+        }
         Err(err) => {
             warn!(
                 "Failed to create libseat session: {err}. Falling back to direct DRM open; libinput and VT switching will be disabled"
@@ -147,10 +545,29 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         }
     };
 
+    let mut event_loop: EventLoop<()> = EventLoop::try_new().context("creating event loop")?;
+    let loop_handle = event_loop.handle();
+    
+    if let Some(notifier) = _session_notifier.take() {
+        loop_handle
+            .insert_source(notifier, |_, _, _: &mut ()| {
+                trace!("Session event during init");
+            })
+            .map_err(|e| anyhow::anyhow!("Error inserting session notifier: {e:?}"))?;
+        info!("Session notifier registered, dispatching initial events");
+        
+        // Dispatch events to ensure session is activated
+        event_loop
+            .dispatch(Some(std::time::Duration::from_millis(100)), &mut ())
+            .context("initial event dispatch")?;
+    }
+
     let seat_name = session
         .as_ref()
         .map(|s| s.seat())
         .unwrap_or_else(|| "seat0".to_string());
+    
+    info!("Using seat: {}", seat_name);
 
     let mut display: Display<WoState> = Display::new().context("creating Wayland display")?;
     let dh = display.handle();
@@ -163,16 +580,61 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             .flatten()
             .context("no primary GPU found")?
     };
+    
     info!(gpu = %gpu_path.display(), "using GPU");
 
     let drm_fd = if let Some(session) = session.as_mut() {
-        session
-            .open(
+        info!("Opening DRM device via libseat session: {:?}", gpu_path);
+        let mut last_err = None;
+        let mut opened_fd = None;
+        let max_attempts = 30;
+        let retry_delay = Duration::from_millis(100);
+
+        for attempt in 1..=max_attempts {
+            match session.open(
                 &gpu_path,
                 OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
-            )
-            .context("opening DRM device")?
+            ) {
+                Ok(fd) => {
+                    info!("Successfully opened DRM device via session, fd={:?}", fd);
+                    opened_fd = Some(fd);
+                    break;
+                }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    if is_would_block_message(&err_msg) && attempt < max_attempts {
+                        warn!(
+                            attempt,
+                            max_attempts,
+                            gpu = %gpu_path.display(),
+                            "DRM device busy (WouldBlock/EAGAIN), retrying open"
+                        );
+                        last_err = Some(err_msg);
+                        thread::sleep(retry_delay);
+                        continue;
+                    }
+                    last_err = Some(err_msg);
+                    break;
+                }
+            }
+        }
+
+        match opened_fd {
+            Some(fd) => fd,
+            None => {
+                let detail = last_err.unwrap_or_else(|| "unknown error".to_string());
+                error!(
+                    gpu = %gpu_path.display(),
+                    "Failed to open DRM device via session after retries: {detail}"
+                );
+                return Err(anyhow::anyhow!(
+                    "opening DRM device via session failed after retries: {}. This usually means another active compositor/session still owns the seat DRM node.",
+                    detail
+                ));
+            }
+        }
     } else {
+        info!("Opening DRM device directly (no session): {:?}", gpu_path);
         smithay::reexports::rustix::fs::open(
             &gpu_path,
             OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
@@ -184,6 +646,13 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     let drm_device_fd = DrmDeviceFd::new(DeviceFd::from(drm_fd));
     let (mut drm, _drm_notifier) =
         DrmDevice::new(drm_device_fd.clone(), true).context("creating DRM device")?;
+
+    if let Err(e) = drm::Device::acquire_master_lock(&drm_device_fd) {
+        return Err(anyhow::anyhow!(
+            "failed to become DRM master on {}: {e}. The GPU is likely in use by another active session/compositor. Switch to a free VT, stop the other session, or set compositor.drm_device to a free card.",
+            gpu_path.display()
+        ));
+    }
 
     let gbm_device = GbmDevice::new(drm_device_fd.clone()).context("creating GBM device")?;
 
@@ -252,6 +721,9 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     output.set_preferred(output_mode);
     output.create_global::<WoState>(&dh);
 
+    // Get renderer formats before moving renderer into BackendData
+    let renderer_formats = renderer.dmabuf_formats();
+
     let backend = BackendData {
         output: output.clone(),
         size: (width, height),
@@ -305,13 +777,45 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         }
     }
 
-    // Schedule autostart tasks to be executed from the event loop thread
     let mut autostart_tasks: Vec<(crate::config::AutostartConfig, std::time::Instant)> = Vec::new();
     let now = std::time::Instant::now();
     for task in &config.autostart {
         let when = now + std::time::Duration::from_millis(task.delay);
         autostart_tasks.push((task.clone(), when));
     }
+    let swapchain_format = if renderer_formats
+        .iter()
+        .any(|fmt| fmt.code == Fourcc::Xrgb8888)
+    {
+        Fourcc::Xrgb8888
+    } else if renderer_formats
+        .iter()
+        .any(|fmt| fmt.code == Fourcc::Argb8888)
+    {
+        Fourcc::Argb8888
+    } else {
+        renderer_formats
+            .iter()
+            .next()
+            .map(|fmt| fmt.code)
+            .unwrap_or(Fourcc::Xrgb8888)
+    };
+
+    let mut swapchain_modifiers: Vec<Modifier> = Vec::new();
+    for fmt in renderer_formats.iter().filter(|fmt| fmt.code == swapchain_format) {
+        if !swapchain_modifiers.contains(&fmt.modifier) {
+            swapchain_modifiers.push(fmt.modifier);
+        }
+    }
+    if swapchain_modifiers.is_empty() {
+        swapchain_modifiers.push(Modifier::Invalid);
+    }
+
+    info!(
+        ?swapchain_format,
+        modifiers = swapchain_modifiers.len(),
+        "using swapchain format/modifiers from renderer"
+    );
 
     let swapchain: Swapchain<GbmAllocator<DrmDeviceFd>> = Swapchain::new(
         GbmAllocator::new(
@@ -320,8 +824,8 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         ),
         width,
         height,
-        Fourcc::Xrgb8888,
-        vec![Modifier::Invalid],
+        swapchain_format,
+        swapchain_modifiers,
     );
 
     let output_rect: Rectangle<i32, Physical> =
@@ -376,6 +880,11 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
         wayland_socket,
         frame_timestamps: std::collections::HashMap::new(),
         input_events_pending: false,
+        session,
+        active: true,
+        vblank_pending: false,
+        consecutive_flip_failures: 0,
+        gles_tex_cache: std::collections::HashMap::new(),
     };
 
     // Create calloop event loop
@@ -384,13 +893,56 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     let loop_handle = event_loop.handle();
     let loop_signal = event_loop.get_signal();
 
-    // Set up signal handler for clean shutdown
     let signal_for_handler = loop_signal.clone();
     ctrlc::set_handler(move || {
         info!("Received Ctrl+C, initiating shutdown");
         signal_for_handler.stop();
     })
     .expect("Error setting Ctrl-C handler");
+
+    // 1. Hook up the Session Notifier to handle VT switching!
+    if let Some(notifier) = _session_notifier {
+        loop_handle
+            .insert_source(notifier, |event, _, data: &mut EventLoopData| {
+                use smithay::backend::session::Event;
+                match event {
+                    Event::PauseSession => {
+                        info!("Session paused (VT switched away). Halting rendering.");
+                        data.active = false;
+                        data.vblank_pending = false;
+                    }
+                    Event::ActivateSession => {
+                        info!("Session activated (VT switched back). Resuming rendering.");
+                        data.active = true;
+                        data.vblank_pending = false; // Reset to ensure we can render
+                        if let Err(e) = data.display.flush_clients() {
+                            warn!("Failed to flush Wayland clients on activation: {e}");
+                        }
+                        render_frame(data);          // Force an immediate redraw
+                    }
+                }
+            })
+            .map_err(|e| anyhow::anyhow!("Error inserting session notifier: {e:?}"))?;
+        info!("Session notifier registered for VT switching");
+    }
+
+    loop_handle
+        .insert_source(_drm_notifier, |event, _, data: &mut EventLoopData| {
+            use smithay::backend::drm::DrmEvent;
+            if !data.active {
+                if let DrmEvent::VBlank(_) = event {
+                    data.vblank_pending = false;
+                }
+                trace!("Ignoring DRM event while session is inactive");
+                return;
+            }
+            if let DrmEvent::VBlank(_) = event {
+                // The screen just refreshed! We are clear to render the next frame.
+                data.vblank_pending = false;
+                render_frame(data);
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("Error inserting DRM notifier: {e:?}"))?;
 
     // Insert libinput backend into event loop (operate on `loop_data.state`)
     if let Some(libinput_backend) = libinput_backend {
@@ -405,18 +957,20 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
             .map_err(|e| anyhow::anyhow!("Error inserting libinput source: {e:?}"))?;
     }
 
-    // Main event loop with rendering
-    // Run the calloop event loop with our loop data
+    // Kickstart the render loop with an initial frame
+    info!("Kickstarting VBlank-driven rendering");
+    render_frame(&mut loop_data);
+
+    // Main event loop - purely event-driven (blocking)
     event_loop
-        .run(Some(Duration::from_millis(1)), &mut loop_data, |data| {
-            // Check if we should stop
+        .run(None, &mut loop_data, |data| {
             if !data.state.running {
                 loop_signal.stop();
                 return;
             }
 
             if let Some(vt) = data.state.pending_vt_switch.take() {
-                if let Some(session) = session.as_mut() {
+                if let Some(session) = data.session.as_mut() {
                     if let Err(e) = session.change_vt(vt as i32) {
                         warn!(vt, "Failed to switch VT: {e}");
                     } else {
@@ -519,9 +1073,10 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                     match renderer_arc.lock() {
                         Ok(ref mut renderer) => {
                             match import_electron_frame(renderer, frame) {
-                                Ok((_tex, cached)) => {
+                                Ok((tex, cached)) => {
                                     data.state.damaged_windows.insert(frame_name.clone());
                                     data.state.texture_cache.insert_dmabuf(cached);
+                                    data.gles_tex_cache.insert(frame_name, tex.texture);
                                 }
                                 Err(e) => warn!("DMABUF import failed for '{}': {e:#}", frame_name),
                             }
@@ -530,6 +1085,9 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                     }
                 }
             }
+            
+            // Evict textures for windows no longer in the DMABUF cache
+            data.gles_tex_cache.retain(|name, _| data.state.texture_cache.get_dmabuf(name).is_some());
 
             // Process other messages
             for msg in other_batch {
@@ -911,25 +1469,6 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                 return;
             }
 
-            let adaptive_frame_time = if data.input_events_pending {
-                Duration::from_millis(8)
-            } else {
-                data.frame_time
-            };
-            
-            if data.last_render.elapsed() < adaptive_frame_time {
-                return;
-            }
-            data.last_render = std::time::Instant::now();
-            data.input_events_pending = false;
-
-            if data.first_render {
-                for win_cfg in &data.state.config.windows {
-                    data.state.damaged_windows.insert(win_cfg.name.clone());
-                }
-                data.first_render = false;
-            }
-
             // Execute any due autostart tasks (scheduled at startup)
             if !data.autostart_tasks.is_empty() {
                 let now = std::time::Instant::now();
@@ -1217,385 +1756,9 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
                 data.state.metadata_dirty = false;
             }
 
-            // Rendering pipeline: acquire swapchain slot, render textures, flip display
-            let slot = match data.swapchain.acquire() {
-                Ok(Some(slot)) => slot,
-                Ok(None) => return,
-                Err(e) => {
-                    warn!("Error acquiring swapchain slot: {e}");
-                    return;
-                }
-            };
-
-            let mut target_dmabuf = match slot.export() {
-                Ok(dmabuf) => dmabuf,
-                Err(e) => {
-                    warn!("Error exporting swapchain dmabuf: {e}");
-                    data.swapchain.submitted(&slot);
-                    return;
-                }
-            };
-
-            let render_ok = (|| {
-                let renderer_arc = match data.state.backend.renderer() {
-                    Some(arc) => arc,
-                    None => {
-                        warn!("No renderer available");
-                        return false;
-                    }
-                };
-                let mut renderer_guard = match renderer_arc.lock() {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        warn!("Failed to lock renderer: {e}");
-                        return false;
-                    }
-                };
-                let renderer = &mut *renderer_guard;
-                let mut target = match renderer.bind(&mut target_dmabuf) {
-                    Ok(target) => target,
-                    Err(err) => {
-                        warn!("bind render target failed: {err}");
-                        if is_egl_context_or_surface_lost(&err.to_string()) {
-                            error!(
-                                "EGL context/surface lost while binding DRM render target; shutting down so context can be recreated"
-                            );
-                            data.state.running = false;
-                        }
-                        return false;
-                    }
-                };
-
-                // Pre-import all textures before creating the frame.
-                // Chain root windows (comraw) so they are also rendered.
-                let mut imported_textures = std::collections::HashMap::new();
-                {
-                    let mut windows: Vec<_> = data.state.config.windows.iter()
-                        .chain(data.state.config.root.iter())
-                        .collect();
-                    windows.sort_by_key(|w| w.z_order);
-                    for win in &windows {
-                        if let Some(cached) = data.state.texture_cache.get_dmabuf(&win.name) {
-                            match renderer.import_dmabuf(&cached.dmabuf, None) {
-                                Ok(tex) => {
-                                    imported_textures.insert(win.name.clone(), tex);
-                                    trace!(window = %win.name, w = win.width, h = win.height, "imported texture");
-                                }
-                                Err(err) => {
-                                    warn!(window = %win.name, "failed to import texture: {err}");
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Prepare cursor elements before starting the frame
-                use smithay::backend::renderer::element::{
-                    surface::render_elements_from_surface_tree, 
-                    Element, Kind, RenderElement,
-                };
-                use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
-                
-                let cursor_elements: Vec<WaylandSurfaceRenderElement<smithay::backend::renderer::gles::GlesRenderer>> = 
-                    if let smithay::input::pointer::CursorImageStatus::Surface(ref cursor_surface) = data.state.cursor_status {
-                        use smithay::utils::Scale as ScaleF;
-                        let scale = ScaleF::from(1.0);
-                        render_elements_from_surface_tree(
-                            renderer,
-                            cursor_surface,
-                            (data.state.pointer_location.x as i32, data.state.pointer_location.y as i32),
-                            scale,
-                            1.0,
-                            Kind::Cursor,
-                        )
-                    } else {
-                        Vec::new()
-                    };
-
-                let mut frame = match renderer.render(
-                    &mut target,
-                    (data.width as i32, data.height as i32).into(),
-                    Transform::Flipped180,
-                ) {
-                    Ok(frame) => frame,
-                    Err(err) => {
-                        warn!("begin frame failed: {err}");
-                        if is_egl_context_or_surface_lost(&err.to_string()) {
-                            error!(
-                                "EGL context/surface lost while starting DRM frame; shutting down so context can be recreated"
-                            );
-                            data.state.running = false;
-                        }
-                        return false;
-                    }
-                };
-
-                if let Err(err) = frame.clear(data.bg.into(), &[data.output_rect]) {
-                    warn!("frame clear failed: {err}");
-                    false
-                } else {
-                    let mut ok = true;
-                    let mut windows: Vec<_> = data.state.config.windows.iter()
-                        .chain(data.state.config.root.iter())
-                        .collect();
-                    windows.sort_by_key(|w| w.z_order);
-                    for win in windows {
-                        // Skip windows that are explicitly unmapped by Electron clients
-                        let mapped = data
-                            .state
-                            .window_mapped
-                            .get(&win.name)
-                            .copied()
-                            .unwrap_or(true);
-                        if !mapped {
-                            continue;
-                        }
-
-                        if let Some(tex) = imported_textures.get(&win.name) {
-                            if let Err(err) = frame.render_texture_at(
-                                tex,
-                                (win.x, win.y).into(),
-                                1,
-                                1.0,
-                                smithay::utils::Transform::Normal,
-                                &[data.output_rect],
-                                &[],
-                                1.0,
-                            ) {
-                                warn!(window = %win.name, "render texture failed: {err}");
-                                ok = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    for element in &cursor_elements {
-                        use smithay::utils::Scale as ScaleF;
-                        let scale = ScaleF::from(1.0);
-                        let src = element.src();
-                        let dst = element.geometry(scale);
-                        if let Err(e) = element.draw(&mut frame, src, dst, &[data.output_rect], &[]) {
-                            trace!("Failed to render cursor element: {}", e);
-                        }
-                    }
-
-                    if ok {
-                        if let Err(err) = frame.finish() {
-                            warn!("frame finish failed: {err}");
-                            if is_egl_context_or_surface_lost(&err.to_string()) {
-                                error!("EGL context/surface lost while finishing DRM frame");
-                                data.state.running = false;
-                            }
-                            false
-                        } else {
-                            true
-                        }
-                    } else {
-                        warn!("texture rendering failed, skipping frame");
-                        false
-                    }
-                }
-            })();
-
-            // Always send frame callbacks to Wayland clients so they can
-            // schedule their next buffer commit.  Skipping these on render
-            // failures causes clients to stall indefinitely waiting for vblank.
-            // Use the UNIX epoch timestamp like nested mode.
-            let presented_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            let windows_snapshot: Vec<_> = data.state.space.elements().cloned().collect();
-            for window in &windows_snapshot {
-                window.send_frame(
-                    &data.state.output,
-                    presented_at,
-                    None,
-                    |_, _| Some(data.state.output.clone()),
-                );
+            if data.active {
+                render_frame(data);
             }
-
-            // Export dirty Wayland surfaces to Electron clients via SURFACE_BUFFER IPC.
-            // This feeds Wayland client content into comraw's web canvases for rendering.
-            {
-                use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
-                use smithay::reexports::wayland_server::Resource;
-                use smithay::wayland::compositor::with_states;
-                use smithay::wayland::shm::with_buffer_contents;
-
-                let dirty: Vec<_> =
-                    data.state.dirty_surfaces.drain().collect();
-
-                for surface in dirty {
-                    let surface_id = surface.id();
-                    let (window_name, window_geo) = if let Some(n) =
-                        data.state.wayland_window_names.get(&surface_id).cloned()
-                    {
-                        let sid = surface_id.clone();
-                        let geo = data.state.space.elements().find_map(|w| {
-                            if w.wl_surface().map(|s| s.id()) == Some(sid.clone()) {
-                                data.state.space.element_geometry(w)
-                            } else {
-                                None
-                            }
-                        });
-                        (n, geo)
-                    } else {
-                        let sid = surface_id.clone();
-                        let x11_result = data.state.space.elements().find_map(|w| {
-                            let x11 = w.x11_surface()?;
-                            let wl = x11.wl_surface()?;
-                            if wl.id() == sid.clone() {
-                                let name = data.state.x11_window_names.get(&x11.window_id()).cloned()?;
-                                let geo = data.state.space.element_geometry(w);
-                                Some((name, geo))
-                            } else {
-                                None
-                            }
-                        });
-                        match x11_result {
-                            Some((n, geo)) => (n, geo),
-                            None => continue,
-                        }
-                    };
-
-                    let Some(geo) = window_geo else { continue };
-
-                    // Calculate bbox (bounding box) for CSD windows with shadows/decorations
-                    // geo.loc is the offset from surface origin to content area
-                    // For libadwaita: geo.loc is typically (10, 10) for 10px shadows
-                    // bbox needs to include the decorations, so expand by geo.loc on both sides
-                    let bbox_w = (geo.size.w + geo.loc.x.max(0) * 2) as u32;
-                    let bbox_h = (geo.size.h + geo.loc.y.max(0) * 2) as u32;
-
-                    let (w, h) = (bbox_w, bbox_h);
-                    if w == 0 || h == 0 {
-                        continue;
-                    }
-
-                    // Read pixel data from the committed SHM buffer
-                    let pixels_opt: Option<(u32, u32, u32, Vec<u8>)> =
-                        with_states(&surface, |states| {
-                            let rss_data = states
-                                .data_map
-                                .get::<RendererSurfaceStateUserData>()?;
-                            let rss = rss_data.lock().ok()?;
-                            let buffer = rss.buffer()?;
-
-                            let mut result: Option<(u32, u32, u32, Vec<u8>)> = None;
-                            let _ = with_buffer_contents(buffer, |ptr, len, spec| {
-                                let pixel_bytes =
-                                    (spec.stride.max(0) * spec.height.max(0)) as usize;
-                                if pixel_bytes > 0 && pixel_bytes <= len {
-                                    // SAFETY: ptr valid for `pixel_bytes` bytes per SHM contract.
-                                    let slice = unsafe {
-                                        std::slice::from_raw_parts(ptr, pixel_bytes)
-                                    };
-                                    result = Some((
-                                        spec.width as u32,
-                                        spec.height as u32,
-                                        spec.stride as u32,
-                                        slice.to_vec(),
-                                    ));
-                                }
-                            });
-                            result
-                        });
-
-                    if let Some((_bw, _bh, stride, pixels)) = pixels_opt {
-                        let memfd_fd = data.state.window_shm_buffers.entry(window_name.clone()).or_insert_with(|| {
-                            nix::sys::memfd::memfd_create(
-                                std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
-                                nix::sys::memfd::MFdFlags::MFD_CLOEXEC,
-                            ).expect("creating memfd")
-                        });
-
-                        use std::os::unix::io::AsRawFd;
-                        let size = pixels.len() as i64;
-                        let stat = nix::sys::stat::fstat(&*memfd_fd).unwrap();
-                        if stat.st_size != size {
-                            nix::unistd::ftruncate(&*memfd_fd, size).expect("truncating memfd");
-                        }
-
-                        nix::unistd::lseek(&*memfd_fd, 0, nix::unistd::Whence::SeekSet).expect("seeking memfd");
-                        nix::unistd::write(&*memfd_fd, &pixels).expect("writing to memfd");
-
-                        // Surface is from dirty_surfaces, so it's definitely dirty
-                        if let Some(ref ipc) = data.state.electron_ipc {
-                            let pid = std::process::id();
-                            if let Err(e) = ipc.broadcast_shm_buffer(
-                                &window_name,
-                                w,
-                                h,
-                                stride,
-                                pid,
-                                memfd_fd.as_raw_fd() as i32,
-                            ) {
-                                debug!(
-                                    "shm buffer broadcast failed for {}: {}",
-                                    window_name, e
-                                );
-                            }
-                        }
-                    } else if let Some(ref ipc) = data.state.electron_ipc {
-                        // If no SHM pixels, check if it's a DMABUF (optimal for games)
-                        let dmabuf_opt = with_states(&surface, |states| {
-                             let rss_data = states.data_map.get::<RendererSurfaceStateUserData>()?;
-                             let rss = rss_data.lock().ok()?;
-                             let buffer = rss.buffer()?;
-                             smithay::wayland::dmabuf::get_dmabuf(buffer).ok().cloned()
-                        });
-
-                        if let Some(dmabuf) = dmabuf_opt {
-                            // Surface is from dirty_surfaces, so it has new damage
-                            if let Err(e) = ipc.broadcast_dmabuf_frame(&window_name, &dmabuf) {
-                                debug!("dmabuf broadcast failed for {}: {}", window_name, e);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Check rendering result and skip page flip if rendering failed
-            if !render_ok {
-                trace!("Skipping page flip for failed frame");
-                data.swapchain.submitted(&slot);
-                data.state.damaged_windows.clear();
-                return;
-            }
-
-            // Clear the damaged windows set for the next frame
-            data.state.damaged_windows.clear();
-            data.state.dirty_surfaces.clear();
-
-            let fb = match framebuffer_from_bo(&data.drm_device_fd, &slot, false) {
-                Ok(fb) => fb,
-                Err(e) => {
-                    warn!("Error creating framebuffer: {e}");
-                    data.swapchain.submitted(&slot);
-                    return;
-                }
-            };
-
-            let plane_state = PlaneState {
-                handle: data.drm_surface.plane(),
-                config: Some(PlaneConfig {
-                    src: data.src_rect,
-                    dst: data.output_rect,
-                    transform: Transform::Normal,
-                    alpha: 1.0,
-                    damage_clips: None,
-                    fb: *fb.as_ref(),
-                    fence: None,
-                }),
-            };
-
-            if let Err(err) = data.drm_surface.page_flip([plane_state.clone()], true) {
-                if let Err(commit_err) = data.drm_surface.commit([plane_state], true) {
-                    warn!("drm present failed: page_flip={err}, commit={commit_err}");
-                }
-            }
-
-            data.swapchain.submitted(&slot);
         })
         .context("running event loop")?;
 
