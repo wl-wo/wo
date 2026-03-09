@@ -1,46 +1,66 @@
 # Maintainer: Stephen E. Hellings <stephen@hellings.cc>
 
 pkgname=wo-git
-pkgver=0.1.0
+pkgver=0.1.0.r2.ge442ad4
 pkgrel=1
 pkgdesc='The Electron Wayland Compositor'
 arch=('x86_64')
-url='https://github.com/hellings/wo'
+url='https://github.com/wl-wo/wo'
 license=('MIT')
+provides=('wo')
+conflicts=('wo')
 depends=(
+  'electron'
   'libdrm'
   'libinput'
-  'libseat'
+  'seatd'
   'libxkbcommon'
   'mesa'
-  'wayland'
-  'xorg-xwayland'
   'pipewire'
-  'electron'
+  'wayland'
+  'xdg-desktop-portal'
+  'xorg-xwayland'
 )
 makedepends=(
+  'bun'
   'cargo'
-  'rust'
   'clang'
+  'npm'
   'pkgconf'
+  'rust'
 )
 options=('!lto')
 
 source=(
-  "git+https://github.com/wo-wl/wo.git"
-  "git+https://github.com/wo-wl/comraw.git"
-  "config.example.toml"
-  "packaging/wayland-sessions/wo.desktop"
-  "electron"
+  "wo::git+https://github.com/wl-wo/wo.git"
+  "comraw::git+https://github.com/wl-wo/comraw.git"
 )
+sha256sums=('SKIP' 'SKIP')
+
+pkgver() {
+  cd "$srcdir/wo"
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
 
 build() {
-  cd "$startdir"
+  cd "$srcdir/wo"
   cargo build --release --locked --bins
+
+  cd "$srcdir/wo/electron"
+  bun install --frozen-lockfile
+  bun run build
+  bun run build-native
+
+  cd "$srcdir/wo/electron/types"
+  bun install
+
+  cd "$srcdir/comraw"
+  npm install --no-audit --no-fund
+  npm run build
 }
 
 package() {
-  cd "$startdir"
+  cd "$srcdir/wo"
 
   install -Dm755 target/release/wo "$pkgdir/usr/bin/wo"
   install -Dm755 target/release/wo-portal "$pkgdir/usr/bin/wo-portal"
@@ -51,7 +71,10 @@ package() {
   install -Dm644 config.example.toml \
     "$pkgdir/usr/share/doc/$pkgname/config.example.toml"
 
-  if [[ -d electron ]]; then
-    cp -a electron "$pkgdir/usr/lib/$pkgname/"
-  fi
+  install -d "$pkgdir/usr/lib/wo"
+  cp -a electron/dist "$pkgdir/usr/lib/wo/"
+  cp -a electron/native "$pkgdir/usr/lib/wo/"
+
+  install -d "$pkgdir/usr/lib/wo/comraw"
+  cp -a "$srcdir/comraw/dist" "$pkgdir/usr/lib/wo/comraw/"
 }

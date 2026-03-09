@@ -19,3 +19,7 @@ interactive = false
 name = "init-portal"
 command = "wo://portal/start"
 delay = 100
+
+[[autostart]]
+name = "vite"
+command = "cd /
