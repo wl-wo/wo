@@ -586,16 +586,21 @@ fn render_frame(data: &mut EventLoopData) {
     // VT switch), we must use commit() which includes ALLOW_MODESET.
     // page_flip() only does a non-blocking flip without modesetting and will
     // fail with EINVAL if the CRTC doesn't have a mode set yet.
+    //
+    // IMPORTANT: Even when commit_pending() is false (Ly left the CRTC in a
+    // matching mode), the first frame still needs a full modeset commit to
+    // ensure CRTC ACTIVE=1 and a valid framebuffer is bound. page_flip alone
+    // may "succeed" but produce no output if the CRTC was left without an
+    // active framebuffer by the display manager.
     let commit_pending = data.drm_surface.commit_pending();
-    let result = if commit_pending {
-        info!("Performing initial modeset commit (textures={})", tex_count);
+    let force_initial = data.total_flips == 0;
+    let result = if commit_pending || force_initial {
+        info!(
+            "Performing modeset commit (commit_pending={}, first_frame={}, textures={})",
+            commit_pending, force_initial, tex_count
+        );
         data.drm_surface.commit([plane_state.clone()], true)
     } else {
-        // On the very first page_flip (no prior flips), log at INFO level
-        // so we can confirm the rendering pipeline is working.
-        if data.total_flips == 0 {
-            info!("First page_flip (commit_pending=false, textures={})", tex_count);
-        }
         data.drm_surface.page_flip([plane_state.clone()], true)
     };
 
@@ -661,7 +666,7 @@ fn render_frame(data: &mut EventLoopData) {
     data.swapchain.submitted(&slot);
 }
 
-fn run_drm(config: Config) -> Result<(), anyhow::Error> {
+fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     let (session, session_notifier) = LibSeatSession::new().map_err(|err| {
         anyhow::anyhow!(
             "Failed to create libseat session: {err}. wo requires a seat-managed session to access DRM/input devices safely. Run from a proper login session (logind/seatd)."
@@ -1026,6 +1031,18 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
     let render_node =
         DrmNode::from_path(&gpu_path).context("resolving DRM node for dmabuf feedback")?;
 
+    // Merge [[root]] entries into config.windows BEFORE WoState::new so that
+    // render_frame, window_mapped, and respawn logic all see them.
+    for root_cfg in &config.root.clone() {
+        let mut full = root_cfg.clone();
+        full.x = 0;
+        full.y = 0;
+        full.width = width;
+        full.height = height;
+        full.z_order = std::i32::MIN / 2;
+        config.windows.push(full);
+    }
+
     let mut state = WoState::new(&mut display, config.clone(), render_node, backend);
     state.can_switch_vt = true;
 
@@ -1037,29 +1054,8 @@ fn run_drm(config: Config) -> Result<(), anyhow::Error> {
 
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("electron");
     let electron_render_node = render_node_for_card(&gpu_path);
-    // Spawn any root (fullscreen) entries first. Root entries are an
-    // alternative to [[windows]] and are mapped to the full output size.
-    eprintln!("Root configs: {:#?}", config.root);
-    for root_cfg in &config.root {
-        let mut full = root_cfg.clone();
-        full.x = 0;
-        full.y = 0;
-        full.width = width;
-        full.height = height;
-        // put roots behind normal windows by using a very low z_order
-        full.z_order = std::i32::MIN / 2;
-        match ElectronProcess::spawn(
-            &full,
-            &config.compositor.electron_path,
-            &app_dir,
-            &config.compositor.ipc_socket,
-            &electron_render_node,
-        ) {
-            Ok(proc) => state.electron_processes.push(proc),
-            Err(e) => error!(window = %full.name, "failed to spawn Electron root: {e:#}"),
-        }
-    }
 
+    // All windows (including merged [[root]] entries) are now in config.windows.
     for win_cfg in &config.windows {
         match ElectronProcess::spawn(
             win_cfg,
