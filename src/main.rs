@@ -93,10 +93,13 @@ struct EventLoopData {
     electron_render_node: String,
     /// Total successful page flips (for startup diagnostics).
     total_flips: u64,
-    /// Hold the currently-displayed swapchain slot so the GBM BO is not
-    /// recycled while the CRTC is still scanning it out. Released when
-    /// the next frame is submitted.
+    /// Hold the buffer the CRTC is currently scanning out so its GBM BO is
+    /// not recycled. Promoted from `pending_slot` on VBlank.
     current_slot: Option<Slot<smithay::backend::allocator::gbm::GbmBuffer>>,
+    /// Hold the buffer submitted for the next page flip, waiting for VBlank
+    /// confirmation. Without this, the CRTC's active scanout buffer could be
+    /// freed prematurely, causing every-other-frame flicker.
+    pending_slot: Option<Slot<smithay::backend::allocator::gbm::GbmBuffer>>,
 }
 
 const MAX_CONSECUTIVE_FLIP_FAILURES: u32 = 5;
@@ -335,6 +338,7 @@ fn render_frame(data: &mut EventLoopData) {
                 );
                 data.vblank_pending = false;
                 data.vblank_since = None;
+                data.current_slot = data.pending_slot.take();
             } else {
                 return;
             }
@@ -544,6 +548,21 @@ fn render_frame(data: &mut EventLoopData) {
             );
         }
 
+        // Finalize the GL frame — flushes all rendering commands to the
+        // framebuffer.  Without this, the GBM BO may contain stale or
+        // incomplete pixel data, causing flicker.
+        match frame.finish() {
+            Ok(_) => {}
+            Err(e) => {
+                warn!("Failed to finish frame: {e}");
+                if is_egl_context_or_surface_lost(&e.to_string()) {
+                    error!("EGL context/surface lost while finishing frame");
+                    context_lost = true;
+                    return false;
+                }
+            }
+        }
+
         true
     })();
 
@@ -617,9 +636,9 @@ fn render_frame(data: &mut EventLoopData) {
             data.vblank_pending = true;
             data.vblank_since = Some(Instant::now());
             data.swapchain.submitted(&slot);
-            // Hold the slot so its GBM BO is not recycled while the CRTC
-            // scans it out. The previous slot (if any) is released here.
-            data.current_slot = Some(slot);
+            // Hold the slot as pending until VBlank confirms the flip.
+            // current_slot (the active scanout buffer) stays alive until then.
+            data.pending_slot = Some(slot);
             data.total_flips += 1;
             if data.total_flips == 1 {
                 info!("First successful page flip (commit_pending={})", commit_pending);
@@ -670,7 +689,7 @@ fn render_frame(data: &mut EventLoopData) {
                 data.vblank_pending = true;
                 data.vblank_since = Some(Instant::now());
                 data.swapchain.submitted(&slot);
-                data.current_slot = Some(slot);
+                data.pending_slot = Some(slot);
                 data.total_flips += 1;
             }
         }
@@ -1188,6 +1207,7 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         electron_render_node: electron_render_node,
         total_flips: 0,
         current_slot: None,
+        pending_slot: None,
     };
 
     let signal_for_handler = loop_signal.clone();
@@ -1205,14 +1225,17 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
                 if let DrmEvent::VBlank(_) = event {
                     data.vblank_pending = false;
                     data.vblank_since = None;
+                    data.current_slot = data.pending_slot.take();
                 }
                 trace!("Ignoring DRM event while session is inactive");
                 return;
             }
             if let DrmEvent::VBlank(_) = event {
-                // The screen just refreshed! We are clear to render the next frame.
+                // The flip is complete: the pending buffer is now being scanned.
+                // Promote it to current (releasing the old scanout buffer).
                 data.vblank_pending = false;
                 data.vblank_since = None;
+                data.current_slot = data.pending_slot.take();
                 render_frame(data);
             }
         })

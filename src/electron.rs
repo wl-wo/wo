@@ -832,7 +832,7 @@ fn handle_connection(
                 match msg {
                     ElectronMessage::Frame(frame) => {
                         let seq = frame.seq;
-                        debug!(window = %name, seq, "sending FRAME_ACK");
+                        info!(window = %name, seq, "received FRAME, sending ACK");
                         if let Err(e) = client.write_frame_ack(seq) {
                             error!(window = %name, seq, "failed to send FRAME_ACK: {e:#}");
                         }

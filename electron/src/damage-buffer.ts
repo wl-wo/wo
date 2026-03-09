@@ -1,4 +1,5 @@
 import { Socket } from 'net';
+import { writeSync } from 'fs';
 
 import { MAGIC } from './protocol.js';
 
@@ -181,8 +182,14 @@ export class WoDmabufSender {
       plane.writeUInt32LE(imported.modifier_hi, 8);
       plane.writeUInt32LE(imported.modifier_lo, 12);
 
-      this.socket.write(header);
-      this.socket.write(plane);
+      // CRITICAL: We must use synchronous, unbuffered writes to the raw
+      // socket fd so that the header+plane bytes are in the kernel buffer
+      // BEFORE sendFd's sendmsg() call.  Node's socket.write() is async
+      // and buffers in userspace — sendFd (a native sendmsg) would race
+      // ahead, delivering the SCM_RIGHTS ancillary data before the header
+      // bytes, corrupting the protocol framing on the compositor side.
+      const combined = Buffer.concat([header, plane]);
+      writeSync(socketFd, combined, 0, combined.length);
       this.native.sendFd(socketFd, imported.fd);
 
       const sentSeq = this.seq;
