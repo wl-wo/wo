@@ -90,6 +90,8 @@ struct EventLoopData {
     frame_timestamps: std::collections::HashMap<String, Instant>,
     gles_tex_cache: std::collections::HashMap<String, smithay::backend::renderer::gles::GlesTexture>,
     input_events_pending: bool,
+    /// Track previous cursor position to detect cursor movement for damage tracking.
+    last_cursor_pos: (f64, f64),
     session: smithay::backend::session::libseat::LibSeatSession,
     active: bool,
     vblank_pending: bool,
@@ -476,6 +478,32 @@ fn render_frame(data: &mut EventLoopData) {
             data.state.damaged_windows.insert(win_cfg.name.clone());
         }
         data.first_render = false;
+    }
+
+    // Detect cursor movement for damage tracking
+    let cursor_pos = (data.state.pointer_location.x, data.state.pointer_location.y);
+    let cursor_moved = cursor_pos != data.last_cursor_pos;
+    if cursor_moved {
+        data.last_cursor_pos = cursor_pos;
+    }
+
+    // Check for pending screencopy requests that require a fresh render
+    let has_screencopy = data.state.screencopy_state.as_ref()
+        .map_or(false, |s| s.has_pending_frames());
+    let has_portal_streams = data.state.portal.as_ref()
+        .map_or(false, |p| !p.get_active_sessions().is_empty());
+
+    // Skip the expensive render+flip cycle when nothing visual has changed.
+    // Dirty surface exports (SHM/DMABUF to Electron) are handled separately
+    // and still run when dirty_surfaces is non-empty.
+    let frame_dirty = !data.state.damaged_windows.is_empty()
+        || !data.state.dirty_surfaces.is_empty()
+        || cursor_moved
+        || has_screencopy
+        || has_portal_streams;
+
+    if !frame_dirty {
+        return;
     }
 
     // Acquire swapchain slot
@@ -966,15 +994,7 @@ fn render_frame(data: &mut EventLoopData) {
                 });
 
                 if read_ok.is_ok() {
-                    // GL returns bottom-up rows; flip to top-down.
-                    let stride = fb_w as usize * 4;
-                    for y in 0..(fb_h as usize / 2) {
-                        let top = y * stride;
-                        let bot = (fb_h as usize - 1 - y) * stride;
-                        for x in 0..stride {
-                            fb_pixels.swap(top + x, bot + x);
-                        }
-                    }
+                    // GBM-backed FBO stores pixels top-down; no row flip needed.
 
                     // Convert RGBA→ARGB (wl_shm expects ARGB8888)
                     for pixel in fb_pixels.chunks_exact_mut(4) {
@@ -1060,14 +1080,7 @@ fn render_frame(data: &mut EventLoopData) {
                     );
                 });
                 if read_ok.is_ok() {
-                    let stride = fb_w as usize * 4;
-                    for y in 0..(fb_h as usize / 2) {
-                        let top = y * stride;
-                        let bot = (fb_h as usize - 1 - y) * stride;
-                        for x in 0..stride {
-                            fb_pixels.swap(top + x, bot + x);
-                        }
-                    }
+                    // GBM-backed FBO stores pixels top-down; no row flip needed.
                     for pixel in fb_pixels.chunks_exact_mut(4) {
                         let (r, g, b, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
                         pixel[0] = b;
@@ -1869,6 +1882,7 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         wayland_socket,
         frame_timestamps: std::collections::HashMap::new(),
         input_events_pending: false,
+        last_cursor_pos: (0.0, 0.0),
         session,
         active: true,
         vblank_pending: false,

@@ -296,6 +296,8 @@ pub fn run_nested(config: Config) -> Result<()> {
     // Frame tracking for backpressure management
     let mut frame_timestamps: HashMap<String, Instant> = HashMap::new();
     let _max_frame_age = Duration::from_millis(33); // Drop frames older than 2 frames @60Hz
+    // Track previous cursor position to detect movement
+    let mut last_cursor_pos: (f64, f64) = (0.0, 0.0);
 
     info!("Nested compositor running");
 
@@ -551,6 +553,16 @@ pub fn run_nested(config: Config) -> Result<()> {
         let output_rect: Rectangle<i32, Physical> =
             Rectangle::new((0, 0).into(), (size.w as i32, size.h as i32).into());
 
+        // Determine if anything visual changed since last frame.
+        let cursor_pos = (state.pointer_location.x, state.pointer_location.y);
+        let cursor_moved = cursor_pos != last_cursor_pos;
+        if cursor_moved {
+            last_cursor_pos = cursor_pos;
+        }
+        let has_new_frames = !latest_frames.is_empty();
+        let has_dirty_surfaces = !state.dirty_surfaces.is_empty();
+        let frame_dirty = has_new_frames || has_dirty_surfaces || cursor_moved;
+
         // Render in a scope to release borrows before submission.
         // Use a labeled block so early exits (bind/render failures) still reach
         // the frame-callback section below — Wayland clients MUST receive frame
@@ -558,6 +570,12 @@ pub fn run_nested(config: Config) -> Result<()> {
         let mut render_ok = false;
         let render_t0 = std::time::Instant::now();
         'render: {
+            // Skip the expensive bind/render/submit cycle when nothing visual changed.
+            // Dirty surface exports (SHM/DMABUF) still happen via the separate path below.
+            if !frame_dirty {
+                break 'render;
+            }
+
             // Bind backend for rendering (this returns (renderer, target))
             let bind_t0 = std::time::Instant::now();
             let (renderer, mut target) = match backend.bind() {
@@ -602,83 +620,115 @@ pub fn run_nested(config: Config) -> Result<()> {
 
             let imported_textures = &gles_tex_cache;
 
-            // Prepare cursor elements before starting the frame
-            let cursor_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = 
-                if let smithay::input::pointer::CursorImageStatus::Surface(ref cursor_surface) = state.cursor_status {
-                    use smithay::backend::renderer::element::{surface::render_elements_from_surface_tree, Kind};
-                    use smithay::utils::Scale as ScaleF;
-                    
-                    let scale = ScaleF::from(1.0);
-                    render_elements_from_surface_tree(
-                        renderer,
-                        cursor_surface,
-                        (state.pointer_location.x as i32, state.pointer_location.y as i32),
-                        scale,
-                        1.0,
-                        Kind::Cursor,
-                    )
-                } else {
-                    Vec::new()
-                };
+            // Only run the full compositing pass when the output needs updating.
+            if frame_dirty {
+                // Prepare cursor elements before starting the frame
+                let cursor_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = 
+                    if let smithay::input::pointer::CursorImageStatus::Surface(ref cursor_surface) = state.cursor_status {
+                        use smithay::backend::renderer::element::{surface::render_elements_from_surface_tree, Kind};
+                        use smithay::utils::Scale as ScaleF;
+                        
+                        let scale = ScaleF::from(1.0);
+                        render_elements_from_surface_tree(
+                            renderer,
+                            cursor_surface,
+                            (state.pointer_location.x as i32, state.pointer_location.y as i32),
+                            scale,
+                            1.0,
+                            Kind::Cursor,
+                        )
+                    } else {
+                        Vec::new()
+                    };
 
-            // Load themed cursor texture for Named cursor status
-            let themed_cursor = if let smithay::input::pointer::CursorImageStatus::Named(ref icon) = state.cursor_status {
-                state.cursor_theme_manager.get_cursor(icon.name(), renderer).cloned()
-            } else if cursor_elements.is_empty() {
-                if !matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden) {
-                    state.cursor_theme_manager.get_cursor("default", renderer).cloned()
+                // Load themed cursor texture for Named cursor status
+                let themed_cursor = if let smithay::input::pointer::CursorImageStatus::Named(ref icon) = state.cursor_status {
+                    state.cursor_theme_manager.get_cursor(icon.name(), renderer).cloned()
+                } else if cursor_elements.is_empty() {
+                    if !matches!(state.cursor_status, smithay::input::pointer::CursorImageStatus::Hidden) {
+                        state.cursor_theme_manager.get_cursor("default", renderer).cloned()
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
-            // Wayland windows are exclusively rendered by comraw via off-screen buffers.
-            // The native space.elements() rendering pass has been removed here.
+                // Wayland windows are exclusively rendered by comraw via off-screen buffers.
+                // The native space.elements() rendering pass has been removed here.
 
-            let mut frame = match renderer.render(
-                &mut target,
-                Size::from((size.w as i32, size.h as i32)),
-                Transform::Flipped180,
-            ) {
-                Ok(frame) => frame,
-                Err(e) => {
-                    warn!("Failed to begin frame: {}", e);
-                    if is_egl_context_or_surface_lost(&e.to_string()) {
-                        error!(
-                            "EGL context/surface lost while starting frame; shutting down so context can be recreated"
-                        );
-                        state.running = false;
+                let mut frame = match renderer.render(
+                    &mut target,
+                    Size::from((size.w as i32, size.h as i32)),
+                    Transform::Flipped180,
+                ) {
+                    Ok(frame) => frame,
+                    Err(e) => {
+                        warn!("Failed to begin frame: {}", e);
+                        if is_egl_context_or_surface_lost(&e.to_string()) {
+                            error!(
+                                "EGL context/surface lost while starting frame; shutting down so context can be recreated"
+                            );
+                            state.running = false;
+                        }
+                        break 'render;
                     }
+                };
+
+                // Clear background
+                if let Err(e) = frame.clear(bg.into(), &[output_rect]) {
+                    warn!("Failed to clear frame: {}", e);
                     break 'render;
                 }
-            };
 
-            // Clear background
-            if let Err(e) = frame.clear(bg.into(), &[output_rect]) {
-                warn!("Failed to clear frame: {}", e);
-                break 'render;
-            }
+                let mut windows: Vec<_> = state
+                    .config
+                    .windows
+                    .iter()
+                    .chain(state.config.root.iter())
+                    .collect();
+                windows.sort_by_key(|w| w.z_order);
 
-            let mut windows: Vec<_> = state
-                .config
-                .windows
-                .iter()
-                .chain(state.config.root.iter())
-                .collect();
-            windows.sort_by_key(|w| w.z_order);
+                for win in windows {
+                    let mapped = state.window_mapped.get(&win.name).copied().unwrap_or(true);
+                    if !mapped {
+                        continue;
+                    }
 
-            for win in windows {
-                let mapped = state.window_mapped.get(&win.name).copied().unwrap_or(true);
-                if !mapped {
-                    continue;
+                    if let Some(tex) = imported_textures.get(&win.name) {
+                        if let Err(e) = frame.render_texture_at(
+                            tex,
+                            (win.x, win.y).into(),
+                            1,
+                            1.0,
+                            Transform::Normal,
+                            &[output_rect],
+                            &[],
+                            1.0,
+                        ) {
+                            warn!("Failed to render texture for {}: {}", win.name, e);
+                        }
+                    }
                 }
 
-                if let Some(tex) = imported_textures.get(&win.name) {
+                // Render cursor on top of everything
+                if !cursor_elements.is_empty() {
+                    for element in &cursor_elements {
+                        use smithay::utils::Scale as ScaleF;
+                        let scale = ScaleF::from(1.0);
+                        let src = element.src();
+                        let dst = element.geometry(scale);
+                        if let Err(e) = element.draw(&mut frame, src, dst, &[output_rect], &[]) {
+                            trace!("Failed to render cursor element: {}", e);
+                        }
+                    }
+                } else if let Some(ref cur) = themed_cursor {
+                    use smithay::backend::renderer::Frame as _;
+                    let cx = state.pointer_location.x as i32 - cur.xhot as i32;
+                    let cy = state.pointer_location.y as i32 - cur.yhot as i32;
                     if let Err(e) = frame.render_texture_at(
-                        tex,
-                        (win.x, win.y).into(),
+                        &cur.texture,
+                        (cx, cy).into(),
                         1,
                         1.0,
                         Transform::Normal,
@@ -686,59 +736,25 @@ pub fn run_nested(config: Config) -> Result<()> {
                         &[],
                         1.0,
                     ) {
-                        warn!("Failed to render texture for {}: {}", win.name, e);
+                        trace!("Failed to render themed cursor: {}", e);
                     }
                 }
-            }
 
-            // (Native rendering loop was removed)
-
-            // NOTE: Wayland surfaces are rendered via offscreen GL to SHM for comraw,
-            // allowing the client to fully control window compositing and layout.
-
-            // Render cursor on top of everything
-            if !cursor_elements.is_empty() {
-                for element in &cursor_elements {
-                    use smithay::utils::Scale as ScaleF;
-                    let scale = ScaleF::from(1.0);
-                    let src = element.src();
-                    let dst = element.geometry(scale);
-                    if let Err(e) = element.draw(&mut frame, src, dst, &[output_rect], &[]) {
-                        trace!("Failed to render cursor element: {}", e);
+                match frame.finish() {
+                    Ok(_) => {
+                        render_ok = true;
+                    }
+                    Err(e) => {
+                        warn!("Failed to finish frame: {}", e);
+                        if is_egl_context_or_surface_lost(&e.to_string()) {
+                            error!(
+                                "EGL context/surface lost while finishing frame; shutting down so context can be recreated"
+                            );
+                            state.running = false;
+                        }
                     }
                 }
-            } else if let Some(ref cur) = themed_cursor {
-                use smithay::backend::renderer::Frame as _;
-                let cx = state.pointer_location.x as i32 - cur.xhot as i32;
-                let cy = state.pointer_location.y as i32 - cur.yhot as i32;
-                if let Err(e) = frame.render_texture_at(
-                    &cur.texture,
-                    (cx, cy).into(),
-                    1,
-                    1.0,
-                    Transform::Normal,
-                    &[output_rect],
-                    &[],
-                    1.0,
-                ) {
-                    trace!("Failed to render themed cursor: {}", e);
-                }
-            }
-
-            match frame.finish() {
-                Ok(_) => {
-                    render_ok = true;
-                }
-                Err(e) => {
-                    warn!("Failed to finish frame: {}", e);
-                    if is_egl_context_or_surface_lost(&e.to_string()) {
-                        error!(
-                            "EGL context/surface lost while finishing frame; shutting down so context can be recreated"
-                        );
-                        state.running = false;
-                    }
-                }
-            }
+            } // end if frame_dirty
             let render_ms = render_t0.elapsed().as_millis();
             if render_ms > 50 {
                 warn!("render phase took {}ms!", render_ms);
@@ -1080,7 +1096,7 @@ pub fn run_nested(config: Config) -> Result<()> {
                 }
 
                 state.dirty_surfaces.clear();
-            } // 'render block ends here, backend borrow is released
+            } // inner bind scope ends here, backend borrow is released
 
 
             let did_bind = render_ok;
@@ -1105,31 +1121,31 @@ pub fn run_nested(config: Config) -> Result<()> {
                     warn!("backend.submit() (eglSwapBuffers) took {}ms! This may indicate a blocked vsync/EGL fence.", submit_ms);
                 }
             }
+        } // 'render block ends here
 
-            let presented_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            let windows_snapshot: Vec<_> = state.space.elements().cloned().collect();
-            for window in windows_snapshot {
-                window.send_frame(&state.output, presented_at, None, |_, _| {
-                    Some(state.output.clone())
-                });
-            }
+        // Frame callbacks must be sent unconditionally so Wayland clients
+        // don't stall — even when the compositor skipped rendering.
+        let presented_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let windows_snapshot: Vec<_> = state.space.elements().cloned().collect();
+        for window in windows_snapshot {
+            window.send_frame(&state.output, presented_at, None, |_, _| {
+                Some(state.output.clone())
+            });
+        }
 
-            // SHM exports already written directly to mmap'd memfds and broadcast above.
+        let render_total_ms = render_t_start.elapsed().as_millis();
+        if render_total_ms > 50 {
+            warn!("render+submit+callbacks total took {}ms!", render_total_ms);
+        }
 
-            let render_total_ms = render_t_start.elapsed().as_millis();
-            if render_total_ms > 50 {
-                warn!("render+submit+callbacks total took {}ms!", render_total_ms);
-            }
+        std::thread::sleep(Duration::from_micros(100));
 
-            std::thread::sleep(Duration::from_micros(100));
-
-            // Log if the entire loop iteration was slow.
-            let total_loop_ms = loop_t0.elapsed().as_millis();
-            if total_loop_ms > 50 {
-                warn!("SLOW LOOP iter={} total={}ms", loop_iter, total_loop_ms);
-            }
+        // Log if the entire loop iteration was slow.
+        let total_loop_ms = loop_t0.elapsed().as_millis();
+        if total_loop_ms > 50 {
+            warn!("SLOW LOOP iter={} total={}ms", loop_iter, total_loop_ms);
         }
     }
 
