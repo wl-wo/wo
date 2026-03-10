@@ -69,12 +69,51 @@ let windowPositionUpdateTimer: NodeJS.Timeout | null = null;
 let dmabufSender: WoDmabufSender | null = null;
 let damageBuffer: DamageBuffer | null = null;
 let nativeDmabuf: any = null;
-let compositorRxBuffer = Buffer.alloc(0);
-// Per-window surface buffer throttle (~30fps max delivery to renderer)
+// IPC receive buffer — grows as needed, avoids Buffer.concat on every chunk.
+let compositorRxBuffer = Buffer.alloc(64 * 1024);
+let rxWriteOffset = 0; // next write position
+let rxReadOffset = 0;  // next read position
 const surfaceBufferPending = new Map<string, { name: string; width: number; height: number; stride: number; pixels: Buffer; damageRects?: Array<{x: number; y: number; width: number; height: number}> }>();
-let surfaceBufferTimer: NodeJS.Timeout | null = null;
+let surfaceBufferFlushScheduled = false;
 const shmReadBufferCache = new Map<string, Buffer>();
 const shmFdCache = new Map<string, { pid: number; fd: number; extFd: number }>();
+
+/** Append incoming chunk to the rx ring buffer, growing if needed. */
+function rxAppend(chunk: Buffer) {
+  const needed = rxWriteOffset + chunk.length;
+  if (needed > compositorRxBuffer.length) {
+    // Compact first: move unread data to front
+    if (rxReadOffset > 0) {
+      compositorRxBuffer.copy(compositorRxBuffer, 0, rxReadOffset, rxWriteOffset);
+      rxWriteOffset -= rxReadOffset;
+      rxReadOffset = 0;
+    }
+    // Grow if still needed
+    if (rxWriteOffset + chunk.length > compositorRxBuffer.length) {
+      const next = Buffer.alloc(Math.max(compositorRxBuffer.length * 2, rxWriteOffset + chunk.length));
+      compositorRxBuffer.copy(next, 0, 0, rxWriteOffset);
+      compositorRxBuffer = next;
+    }
+  }
+  chunk.copy(compositorRxBuffer, rxWriteOffset);
+  rxWriteOffset += chunk.length;
+}
+
+/** Number of unread bytes in the rx buffer. */
+function rxAvailable(): number {
+  return rxWriteOffset - rxReadOffset;
+}
+
+/** Consume `n` bytes from the front of the rx buffer. */
+function rxConsume(n: number) {
+  rxReadOffset += n;
+  // Compact when the read head passes the halfway point
+  if (rxReadOffset > compositorRxBuffer.length / 2) {
+    compositorRxBuffer.copy(compositorRxBuffer, 0, rxReadOffset, rxWriteOffset);
+    rxWriteOffset -= rxReadOffset;
+    rxReadOffset = 0;
+  }
+}
 
 function closeShmFdCache() {
   for (const entry of shmFdCache.values()) {
@@ -118,7 +157,7 @@ function getReusableShmBuffer(windowName: string, size: number): Buffer {
 }
 
 function flushSurfaceBuffers() {
-  surfaceBufferTimer = null;
+  surfaceBufferFlushScheduled = false;
   if (!mainWindow || mainWindow.isDestroyed()) { surfaceBufferPending.clear(); return; }
   for (const entry of surfaceBufferPending.values()) {
     mainWindow.webContents.send('wo:surface-buffer', entry);
@@ -881,24 +920,24 @@ function connectToCompositor(): Promise<void> {
         ipcDataLastLog = now;
       }
       const dataT0 = Date.now();
-      compositorRxBuffer = Buffer.concat([compositorRxBuffer, chunk]);
-      while (compositorRxBuffer.length >= 4) {
-        const magic = compositorRxBuffer.readUInt32LE(0);
+      rxAppend(chunk);
+      while (rxAvailable() >= 4) {
+        const magic = compositorRxBuffer.readUInt32LE(rxReadOffset);
 
         if (magic === MAGIC.FRAME_ACK) {
-          if (compositorRxBuffer.length < 12) break;
-          const seq = compositorRxBuffer.readBigUInt64LE(4).toString();
+          if (rxAvailable() < 12) break;
+          const seq = compositorRxBuffer.readBigUInt64LE(rxReadOffset + 4).toString();
           inFlightFrameSeqs.delete(seq);
-          compositorRxBuffer = compositorRxBuffer.slice(12);
+          rxConsume(12);
           continue;
         }
 
         if (magic === MAGIC.MOUSE_MOVE) {
           // magic(4) + x(8, f64) + y(8, f64) = 20 bytes
-          if (compositorRxBuffer.length < 20) break;
-          const x = compositorRxBuffer.readDoubleLE(4);
-          const y = compositorRxBuffer.readDoubleLE(12);
-          compositorRxBuffer = compositorRxBuffer.slice(20);
+          if (rxAvailable() < 20) break;
+          const x = compositorRxBuffer.readDoubleLE(rxReadOffset + 4);
+          const y = compositorRxBuffer.readDoubleLE(rxReadOffset + 12);
+          rxConsume(20);
           pointerX = Math.round(x);
           pointerY = Math.round(y);
           
@@ -918,10 +957,10 @@ function connectToCompositor(): Promise<void> {
 
         if (magic === MAGIC.MOUSE_BUTTON) {
           // magic(4) + button(4) + pressed(4) + time(4) = 16 bytes
-          if (compositorRxBuffer.length < 16) break;
-          const button = compositorRxBuffer.readUInt32LE(4);
-          const pressed = compositorRxBuffer.readUInt32LE(8) !== 0;
-          compositorRxBuffer = compositorRxBuffer.slice(16);
+          if (rxAvailable() < 16) break;
+          const button = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
+          const pressed = compositorRxBuffer.readUInt32LE(rxReadOffset + 8) !== 0;
+          rxConsume(16);
           
           // OPTIMIZATION: Flush pending mouse moves before button events
           if (pendingMouseMove && mainWindow && !mainWindow.isDestroyed()) {
@@ -952,10 +991,10 @@ function connectToCompositor(): Promise<void> {
 
         if (magic === MAGIC.KEYBOARD) {
           // magic(4) + key(4) + pressed(4) + time(4) = 16 bytes
-          if (compositorRxBuffer.length < 16) break;
-          const key = compositorRxBuffer.readUInt32LE(4);
-          const pressed = compositorRxBuffer.readUInt32LE(8) !== 0;
-          compositorRxBuffer = compositorRxBuffer.slice(16);
+          if (rxAvailable() < 16) break;
+          const key = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
+          const pressed = compositorRxBuffer.readUInt32LE(rxReadOffset + 8) !== 0;
+          rxConsume(16);
 
           // Update modifier state before generating events
           const modKey = MODIFIER_KEYCODES[key];
@@ -989,10 +1028,10 @@ function connectToCompositor(): Promise<void> {
 
         if (magic === MAGIC.SCROLL) {
           // magic(4) + vertical(4, i32) + horizontal(4, i32) + time(4) = 16 bytes
-          if (compositorRxBuffer.length < 16) break;
-          const vertical = compositorRxBuffer.readInt32LE(4);
-          const horizontal = compositorRxBuffer.readInt32LE(8);
-          compositorRxBuffer = compositorRxBuffer.slice(16);
+          if (rxAvailable() < 16) break;
+          const vertical = compositorRxBuffer.readInt32LE(rxReadOffset + 4);
+          const horizontal = compositorRxBuffer.readInt32LE(rxReadOffset + 8);
+          rxConsume(16);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.sendInputEvent({
               type: 'mouseWheel',
@@ -1008,12 +1047,12 @@ function connectToCompositor(): Promise<void> {
 
         if (magic === MAGIC.FOCUS_CHANGE) {
           // magic(4) + name_len(4) + focused(4) + name(N) = 12 + N bytes
-          if (compositorRxBuffer.length < 12) break;
-          const nameLen = compositorRxBuffer.readUInt32LE(4);
-          if (compositorRxBuffer.length < 12 + nameLen) break;
-          const focused = compositorRxBuffer.readUInt32LE(8) !== 0;
-          const windowName = compositorRxBuffer.slice(12, 12 + nameLen).toString('utf8');
-          compositorRxBuffer = compositorRxBuffer.slice(12 + nameLen);
+          if (rxAvailable() < 12) break;
+          const nameLen = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
+          if (rxAvailable() < 12 + nameLen) break;
+          const focused = compositorRxBuffer.readUInt32LE(rxReadOffset + 8) !== 0;
+          const windowName = compositorRxBuffer.slice(rxReadOffset + 12, rxReadOffset + 12 + nameLen).toString('utf8');
+          rxConsume(12 + nameLen);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('wo:focus-change', { window: windowName, focused });
           }
@@ -1022,11 +1061,11 @@ function connectToCompositor(): Promise<void> {
 
         if (magic === MAGIC.WINDOW_META) {
           // magic(4) + payload_len(4) + payload(N) = 8 + N bytes
-          if (compositorRxBuffer.length < 8) break;
-          const payloadLen = compositorRxBuffer.readUInt32LE(4);
-          if (compositorRxBuffer.length < 8 + payloadLen) break;
-          const metadata = compositorRxBuffer.slice(8, 8 + payloadLen).toString('utf8');
-          compositorRxBuffer = compositorRxBuffer.slice(8 + payloadLen);
+          if (rxAvailable() < 8) break;
+          const payloadLen = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
+          if (rxAvailable() < 8 + payloadLen) break;
+          const metadata = compositorRxBuffer.slice(rxReadOffset + 8, rxReadOffset + 8 + payloadLen).toString('utf8');
+          rxConsume(8 + payloadLen);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('wo:window-metadata', { type: 'windowMetadata', metadata });
             // Parse and forward as structured window list for woClient.onWindows
@@ -1042,12 +1081,12 @@ function connectToCompositor(): Promise<void> {
         }
 
         if (magic === MAGIC.SHM_BUFFER) {
-          if (compositorRxBuffer.length < 8) break;
-          const nameLen = compositorRxBuffer.readUInt32LE(4);
+          if (rxAvailable() < 8) break;
+          const nameLen = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
           // Minimum header before we know num_rects
           const baseHeader = 8 + nameLen + 20 + 4; // +4 for num_rects field
-          if (compositorRxBuffer.length < baseHeader) break;
-          let off = 8;
+          if (rxAvailable() < baseHeader) break;
+          let off = rxReadOffset + 8;
           const windowName = compositorRxBuffer.slice(off, off + nameLen).toString('utf8');
           off += nameLen;
           const sbWidth = compositorRxBuffer.readUInt32LE(off); off += 4;
@@ -1057,7 +1096,7 @@ function connectToCompositor(): Promise<void> {
           const fd = compositorRxBuffer.readUInt32LE(off); off += 4;
           const numRects = compositorRxBuffer.readUInt32LE(off); off += 4;
           const fullHeader = baseHeader + numRects * 16;
-          if (compositorRxBuffer.length < fullHeader) break;
+          if (rxAvailable() < fullHeader) break;
 
           const damageRects: Array<{x: number; y: number; width: number; height: number}> = [];
           for (let i = 0; i < numRects; i++) {
@@ -1069,7 +1108,7 @@ function connectToCompositor(): Promise<void> {
             });
             off += 16;
           }
-          compositorRxBuffer = compositorRxBuffer.slice(fullHeader);
+          rxConsume(fullHeader);
 
           try {
             const extFd = getOrOpenShmFd(windowName, pid, fd);
@@ -1116,8 +1155,9 @@ function connectToCompositor(): Promise<void> {
               pixels: safeBuffer,
               damageRects: hasUsableRects ? damageRects : undefined,
             });
-            if (!surfaceBufferTimer) {
-              surfaceBufferTimer = setTimeout(flushSurfaceBuffers, 10);
+            if (!surfaceBufferFlushScheduled) {
+              surfaceBufferFlushScheduled = true;
+              setImmediate(flushSurfaceBuffers);
             }
           } catch (err) {
             const cached = shmFdCache.get(windowName);
@@ -1135,12 +1175,12 @@ function connectToCompositor(): Promise<void> {
         }
 
         if (magic === MAGIC.DMABUF_FRAME) {
-          if (compositorRxBuffer.length < 8) break;
-          const nameLen = compositorRxBuffer.readUInt32LE(4);
+          if (rxAvailable() < 8) break;
+          const nameLen = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
           const numPlanesOffset = 8 + nameLen + 12;
-          if (compositorRxBuffer.length < numPlanesOffset + 4) break;
+          if (rxAvailable() < numPlanesOffset + 4) break;
 
-          let off = 8;
+          let off = rxReadOffset + 8;
           const dmabufName = compositorRxBuffer.slice(off, off + nameLen).toString('utf8');
           off += nameLen;
           const dmabufW = compositorRxBuffer.readUInt32LE(off); off += 4;
@@ -1148,8 +1188,8 @@ function connectToCompositor(): Promise<void> {
           const dmabufFormat = compositorRxBuffer.readUInt32LE(off); off += 4;
           const numPlanes = compositorRxBuffer.readUInt32LE(off); off += 4;
 
-          const totalSize = off + (numPlanes * 24);
-          if (compositorRxBuffer.length < totalSize) break;
+          const totalSize = (off - rxReadOffset) + (numPlanes * 24);
+          if (rxAvailable() < totalSize) break;
 
           try {
             if (nativeDmabuf && ipcSocket) {
@@ -1177,18 +1217,18 @@ function connectToCompositor(): Promise<void> {
             debugLog(`[Wo] DMABUF import failed for ${dmabufName}:`, err);
           }
 
-          compositorRxBuffer = compositorRxBuffer.slice(totalSize);
+          rxConsume(totalSize);
           continue;
         }
 
         if (magic === MAGIC.POINTER_LOCK_REQUEST) {
           // magic(4) + name_len(4) + lock(4) + name(N) = 12 + N bytes
-          if (compositorRxBuffer.length < 12) break;
-          const nameLen = compositorRxBuffer.readUInt32LE(4);
-          if (compositorRxBuffer.length < 12 + nameLen) break;
-          const lock = compositorRxBuffer.readUInt32LE(8) !== 0;
-          const windowName = compositorRxBuffer.slice(12, 12 + nameLen).toString('utf8');
-          compositorRxBuffer = compositorRxBuffer.slice(12 + nameLen);
+          if (rxAvailable() < 12) break;
+          const nameLen = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
+          if (rxAvailable() < 12 + nameLen) break;
+          const lock = compositorRxBuffer.readUInt32LE(rxReadOffset + 8) !== 0;
+          const windowName = compositorRxBuffer.slice(rxReadOffset + 12, rxReadOffset + 12 + nameLen).toString('utf8');
+          rxConsume(12 + nameLen);
 
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('wo:pointer-lock-request', { window: windowName, lock });
@@ -1198,11 +1238,11 @@ function connectToCompositor(): Promise<void> {
 
         if (magic === MAGIC.ENV_UPDATE) {
           // magic(4) + json_len(4) + json(N) = 8 + N bytes
-          if (compositorRxBuffer.length < 8) break;
-          const jsonLen = compositorRxBuffer.readUInt32LE(4);
-          if (compositorRxBuffer.length < 8 + jsonLen) break;
-          const jsonStr = compositorRxBuffer.slice(8, 8 + jsonLen).toString('utf8');
-          compositorRxBuffer = compositorRxBuffer.slice(8 + jsonLen);
+          if (rxAvailable() < 8) break;
+          const jsonLen = compositorRxBuffer.readUInt32LE(rxReadOffset + 4);
+          if (rxAvailable() < 8 + jsonLen) break;
+          const jsonStr = compositorRxBuffer.slice(rxReadOffset + 8, rxReadOffset + 8 + jsonLen).toString('utf8');
+          rxConsume(8 + jsonLen);
 
           try {
             const vars = JSON.parse(jsonStr) as Record<string, string>;
@@ -1221,10 +1261,10 @@ function connectToCompositor(): Promise<void> {
 
         if (magic === MAGIC.SCREENCOPY_EVENT) {
           // magic(4) + active(4) + client_count(4) = 12 bytes
-          if (compositorRxBuffer.length < 12) break;
-          const active = compositorRxBuffer.readUInt32LE(4) !== 0;
-          const clientCount = compositorRxBuffer.readUInt32LE(8);
-          compositorRxBuffer = compositorRxBuffer.slice(12);
+          if (rxAvailable() < 12) break;
+          const active = compositorRxBuffer.readUInt32LE(rxReadOffset + 4) !== 0;
+          const clientCount = compositorRxBuffer.readUInt32LE(rxReadOffset + 8);
+          rxConsume(12);
 
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('wo:screencopy-event', { active, clientCount });
@@ -1233,8 +1273,8 @@ function connectToCompositor(): Promise<void> {
         }
 
         // Unknown message magic; resync by advancing one byte.
-        debugLog('[Wo] UNKNOWN magic 0x' + magic.toString(16).padStart(8, '0') + ' bufLen=' + compositorRxBuffer.length + ' — stream may be corrupted');
-        compositorRxBuffer = compositorRxBuffer.slice(1);
+        debugLog('[Wo] UNKNOWN magic 0x' + magic.toString(16).padStart(8, '0') + ' bufLen=' + rxAvailable() + ' — stream may be corrupted');
+        rxConsume(1);
       }
       const dataElapsed = Date.now() - dataT0;
       if (dataElapsed > 50) {
@@ -1728,7 +1768,7 @@ async function createWindow() {
         }
       }, frameIntervalMs);
       let skippedCount = 0;
-      mainWindow.webContents.on('paint', (_event, _dirty, image) => {
+      mainWindow.webContents.on('paint', (_event, dirty, image) => {
         if (!dmabufSender || !ipcConnected) {
           skippedCount++;
           debugLog('[Wo] SKIPPED paint (dmabufSender=' + !!dmabufSender + ' ipcConnected=' + ipcConnected + ')');
@@ -1749,11 +1789,39 @@ async function createWindow() {
           damageBuffer = new DamageBuffer(size.width, size.height);
         }
         const pixels = image.getBitmap();
-        applyDamagePayload(damageBuffer, {
-          width: size.width,
-          height: size.height,
-          fullFrame: new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength),
-        });
+        const pixelData = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+
+        // Use dirty rect to avoid full-frame copy when only a region changed
+        const isFullFrame = dirty.x === 0 && dirty.y === 0
+          && dirty.width === size.width && dirty.height === size.height;
+
+        if (isFullFrame) {
+          applyDamagePayload(damageBuffer, {
+            width: size.width,
+            height: size.height,
+            fullFrame: pixelData,
+          });
+        } else {
+          // Partial update — copy only the dirty region into the damage buffer
+          const stride = size.width * 4;
+          const patchStride = dirty.width * 4;
+          const patchData = new Uint8Array(dirty.width * dirty.height * 4);
+          for (let row = 0; row < dirty.height; row++) {
+            const srcOff = (dirty.y + row) * stride + dirty.x * 4;
+            const dstOff = row * patchStride;
+            patchData.set(pixelData.subarray(srcOff, srcOff + patchStride), dstOff);
+          }
+          applyDamagePayload(damageBuffer, {
+            width: size.width,
+            height: size.height,
+            patches: [{
+              rect: { x: dirty.x, y: dirty.y, width: dirty.width, height: dirty.height },
+              rgba: patchData,
+              stride: patchStride,
+            }],
+          });
+        }
+
         try {
           const seq = dmabufSender.send(damageBuffer);
           inFlightFrameSeqs.add(seq.toString());
