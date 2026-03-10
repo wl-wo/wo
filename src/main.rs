@@ -106,6 +106,10 @@ struct EventLoopData {
     /// confirmation. Without this, the CRTC's active scanout buffer could be
     /// freed prematurely, causing every-other-frame flicker.
     pending_slot: Option<Slot<smithay::backend::allocator::gbm::GbmBuffer>>,
+    /// Clone of the libinput context for suspend/resume on VT switch.
+    /// The original is consumed by `LibinputInputBackend`; this clone lets us
+    /// call `suspend()` / `resume()` from the session notifier callback.
+    libinput_context: Libinput,
 }
 
 /// Newtype wrapper around `Option<EventLoopData>` for the DRM calloop event
@@ -517,31 +521,34 @@ fn render_frame(data: &mut EventLoopData) {
 
         let renderer: &mut GlesRenderer = &mut renderer_guard;
 
-        // Prepare Wayland surface elements before starting the frame
+        // Prepare Wayland surface elements before starting the frame.
+        // When Electron IPC is active, surfaces are exported via SHM/DMABUF
+        // to the client — skip the expensive GL import here.
         use smithay::backend::renderer::element::{surface::render_elements_from_surface_tree, surface::WaylandSurfaceRenderElement, Kind, RenderElement};
         use smithay::utils::Scale as ScaleF;
         
         let scale = ScaleF::from(1.0);
+        let has_electron = data.state.electron_ipc.is_some();
         let mut wayland_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = Vec::new();
         
-        for window in data.state.space.elements() {
-            if let Some(location) = data.state.space.element_location(window) {
-                let surface = window.toplevel()
-                    .map(|t| t.wl_surface().clone())
-                    .or_else(|| window.x11_surface().and_then(|x| x.wl_surface().clone()));
-                
-                if let Some(surface) = surface {
-                    let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(
-                        renderer,
-                        &surface,
-                        (location.x, location.y),
-                        scale,
-                        1.0,
-                        Kind::Unspecified,
-                    );
+        if !has_electron {
+            for window in data.state.space.elements() {
+                if let Some(location) = data.state.space.element_location(window) {
+                    let surface = window.toplevel()
+                        .map(|t| t.wl_surface().clone())
+                        .or_else(|| window.x11_surface().and_then(|x| x.wl_surface().clone()));
                     
-                    for element in elements {
-                        wayland_elements.push(element);
+                    if let Some(surface) = surface {
+                        let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(
+                            renderer,
+                            &surface,
+                            (location.x, location.y),
+                            scale,
+                            1.0,
+                            Kind::Unspecified,
+                        );
+                        
+                        wayland_elements.extend(elements);
                     }
                 }
             }
@@ -722,16 +729,19 @@ fn render_frame(data: &mut EventLoopData) {
         }
 
         // Export dirty Wayland surfaces to Electron clients via DMABUF/SHM.
-        // Uses Wayland damage rects to skip unchanged surfaces entirely and to
-        // avoid full-buffer reads when only a small region changed.
+        // SHM surfaces are written directly to memfd (ping-pong double-buffered)
+        // to avoid an intermediate Vec<u8> copy.  When usable damage rects exist,
+        // only the affected rows are written for further savings.
         if data.state.electron_ipc.is_some() {
             use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
             use smithay::reexports::wayland_server::Resource;
             use smithay::wayland::compositor::{with_states, Damage, SurfaceAttributes};
             use smithay::wayland::shm::with_buffer_contents;
+            use std::os::unix::io::AsRawFd;
+            use nix::sys::memfd::MFdFlags;
             use tracing::debug;
 
-            let mut exported_pixels: Vec<crate::state::ShmExport> = Vec::new();
+            let pid = std::process::id();
 
             for surface in &dirty_surfaces {
                 let surface_id = surface.id();
@@ -772,7 +782,6 @@ fn render_frame(data: &mut EventLoopData) {
                 let Some(_geo) = window_geo else { continue };
 
                 // Extract Wayland damage rects for partial-update optimization.
-                // Empty damage = full frame (surfaces in dirty_surfaces always get exported).
                 let damage_rects: Vec<crate::state::DamageRect> = with_states(surface, |states| {
                     let mut attrs = states.cached_state.get::<SurfaceAttributes>();
                     let current = attrs.current();
@@ -785,7 +794,6 @@ fn render_frame(data: &mut EventLoopData) {
                                 height: rect.size.h,
                             },
                             Damage::Surface(rect) => {
-                                // Surface-coordinate damage; apply buffer_scale
                                 let scale = current.buffer_scale;
                                 crate::state::DamageRect {
                                     x: rect.loc.x * scale,
@@ -798,40 +806,97 @@ fn render_frame(data: &mut EventLoopData) {
                     }).collect()
                 });
 
-                // Try SHM buffer first (software-rendered clients)
-                let pixels_opt: Option<(u32, u32, u32, Vec<u8>)> =
-                    with_states(surface, |states| {
-                        let rss_data = states.data_map.get::<RendererSurfaceStateUserData>()?;
-                        let rss = rss_data.lock().ok()?;
-                        let buffer = rss.buffer()?;
+                // Prepare memfd pair for this window (ping-pong double buffer)
+                let pair = data.state.window_shm_buffers
+                    .entry(window_name.clone())
+                    .or_insert_with(|| {
+                        let a = nix::sys::memfd::memfd_create(
+                            std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
+                            MFdFlags::MFD_CLOEXEC,
+                        ).expect("creating memfd A");
+                        let b = nix::sys::memfd::memfd_create(
+                            std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
+                            MFdFlags::MFD_CLOEXEC,
+                        ).expect("creating memfd B");
+                        [a, b]
+                    });
+                let idx = data.state.window_shm_write_idx
+                    .entry(window_name.clone())
+                    .or_insert(0);
+                let memfd_fd = &pair[*idx];
 
-                        let mut result: Option<(u32, u32, u32, Vec<u8>)> = None;
-                        let _ = with_buffer_contents(buffer, |ptr, len, spec| {
-                            let pixel_bytes =
-                                (spec.stride.max(0) * spec.height.max(0)) as usize;
-                            if pixel_bytes > 0 && pixel_bytes <= len {
-                                let slice =
-                                    unsafe { std::slice::from_raw_parts(ptr, pixel_bytes) };
-                                result = Some((
-                                    spec.width as u32,
-                                    spec.height as u32,
-                                    spec.stride as u32,
-                                    slice.to_vec(),
-                                ));
+                // Try SHM buffer: write directly to memfd (no intermediate Vec)
+                let shm_meta: Option<(u32, u32, u32)> = with_states(surface, |states| {
+                    let rss_data = states.data_map.get::<RendererSurfaceStateUserData>()?;
+                    let rss = rss_data.lock().ok()?;
+                    let buffer = rss.buffer()?;
+
+                    let mut result: Option<(u32, u32, u32)> = None;
+                    let _ = with_buffer_contents(buffer, |ptr, len, spec| {
+                        let pixel_bytes =
+                            (spec.stride.max(0) * spec.height.max(0)) as usize;
+                        if pixel_bytes == 0 || pixel_bytes > len { return; }
+
+                        let slice =
+                            unsafe { std::slice::from_raw_parts(ptr, pixel_bytes) };
+
+                        // Ensure memfd is correctly sized
+                        let size = pixel_bytes as i64;
+                        let cur_size = nix::sys::stat::fstat(memfd_fd)
+                            .map(|s| s.st_size).unwrap_or(0);
+                        if cur_size != size {
+                            let _ = nix::unistd::ftruncate(memfd_fd, size);
+                        }
+
+                        // Partial-damage write: when damage rects cover a small
+                        // area and the memfd was already the correct size (meaning
+                        // the previous full frame is still valid for undamaged
+                        // regions), write only the damaged rows.
+                        let usable_damage = !damage_rects.is_empty()
+                            && damage_rects.len() < 64
+                            && cur_size == size;
+
+                        if usable_damage {
+                            let stride = spec.stride as usize;
+                            let height = spec.height as usize;
+                            for rect in &damage_rects {
+                                let y0 = (rect.y.max(0) as usize).min(height);
+                                let y1 = ((rect.y + rect.height).max(0) as usize).min(height);
+                                if y0 >= y1 { continue; }
+                                let byte_start = y0 * stride;
+                                let byte_end = y1 * stride;
+                                let _ = nix::unistd::lseek(
+                                    memfd_fd, byte_start as i64,
+                                    nix::unistd::Whence::SeekSet,
+                                );
+                                let _ = nix::unistd::write(memfd_fd, &slice[byte_start..byte_end]);
                             }
-                        });
-                        result
-                    });
+                        } else {
+                            let _ = nix::unistd::lseek(memfd_fd, 0, nix::unistd::Whence::SeekSet);
+                            let _ = nix::unistd::write(memfd_fd, slice);
+                        }
 
-                if let Some((bw, bh, stride, pixels)) = pixels_opt {
-                    exported_pixels.push(crate::state::ShmExport {
-                        window_name,
-                        width: bw,
-                        height: bh,
-                        stride,
-                        pixels,
-                        damage_rects,
+                        result = Some((
+                            spec.width as u32,
+                            spec.height as u32,
+                            spec.stride as u32,
+                        ));
                     });
+                    result
+                });
+
+                if let Some((bw, bh, stride)) = shm_meta {
+                    if let Some(ref ipc) = data.state.electron_ipc {
+                        if let Err(e) = ipc.broadcast_shm_buffer(
+                            &window_name, bw, bh, stride,
+                            pid, memfd_fd.as_raw_fd() as i32,
+                            &damage_rects,
+                        ) {
+                            debug!("DRM shm buffer broadcast failed for {}: {}", window_name, e);
+                        }
+                    }
+                    // Flip to the other buffer for next frame
+                    *idx = 1 - *idx;
                 } else if let Some(ref ipc) = data.state.electron_ipc {
                     // Try DMABUF (hardware-rendered clients / games)
                     let dmabuf_opt = with_states(surface, |states| {
@@ -848,8 +913,6 @@ fn render_frame(data: &mut EventLoopData) {
                     }
                 }
             }
-
-            data.state.pending_shm_exports = exported_pixels;
         }
 
         // Send frame callbacks for the cursor surface so the client keeps
@@ -906,68 +969,8 @@ fn render_frame(data: &mut EventLoopData) {
     data.state.damaged_windows.clear();
     data.state.dirty_surfaces.clear();
 
-    // Write exported SHM pixel buffers to memfd and broadcast to Electron.
-    // Uses ping-pong double buffering: write to one memfd while Electron
-    // reads from the other, eliminating the read/write race condition.
-    {
-        use std::os::unix::io::AsRawFd;
-        use nix::sys::memfd::MFdFlags;
-        use tracing::debug;
-
-        let exports = std::mem::take(&mut data.state.pending_shm_exports);
-        for export in exports {
-            let pair = data.state
-                .window_shm_buffers
-                .entry(export.window_name.clone())
-                .or_insert_with(|| {
-                    let a = nix::sys::memfd::memfd_create(
-                        std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
-                        MFdFlags::MFD_CLOEXEC,
-                    )
-                    .expect("creating memfd A");
-                    let b = nix::sys::memfd::memfd_create(
-                        std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
-                        MFdFlags::MFD_CLOEXEC,
-                    )
-                    .expect("creating memfd B");
-                    [a, b]
-                });
-
-            // Pick the write slot (alternates each frame)
-            let idx = data.state.window_shm_write_idx
-                .entry(export.window_name.clone())
-                .or_insert(0);
-            let memfd_fd = &pair[*idx];
-
-            let size = export.pixels.len() as i64;
-            let stat = nix::sys::stat::fstat(memfd_fd).unwrap();
-            if stat.st_size != size {
-                nix::unistd::ftruncate(memfd_fd, size).expect("truncating memfd");
-            }
-
-            nix::unistd::lseek(memfd_fd, 0, nix::unistd::Whence::SeekSet)
-                .expect("seeking memfd");
-            nix::unistd::write(memfd_fd, &export.pixels).expect("writing to memfd");
-
-            if let Some(ref ipc) = data.state.electron_ipc {
-                let pid = std::process::id();
-                if let Err(e) = ipc.broadcast_shm_buffer(
-                    &export.window_name,
-                    export.width,
-                    export.height,
-                    export.stride,
-                    pid,
-                    memfd_fd.as_raw_fd() as i32,
-                    &export.damage_rects,
-                ) {
-                    debug!("DRM shm buffer broadcast failed for {}: {}", export.window_name, e);
-                }
-            }
-
-            // Flip to the other buffer for next frame
-            *idx = 1 - *idx;
-        }
-    }
+    // SHM surface exports are now written directly to memfd during the
+    // render pass (above), so no post-render copy is needed.
 
     // Get or create the DRM framebuffer for this slot.
     // Caching in the slot's userdata avoids a create/destroy cycle every
@@ -1133,20 +1136,25 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
             };
             match event {
                 Event::PauseSession => {
-                    info!("Session paused (VT switched away). Pausing DRM device and halting rendering.");
+                    info!("Session paused (VT switched away). Pausing DRM device and suspending libinput.");
                     data.active = false;
                     data.vblank_pending = false;
                     data.vblank_since = None;
+                    data.libinput_context.suspend();
                     data.drm.pause();
                 }
                 Event::ActivateSession => {
-                    info!("Session activated (VT switched back). Activating DRM device and resuming rendering.");
+                    info!("Session activated (VT switched back). Activating DRM device and resuming libinput.");
                     if let Err(e) = data.drm.activate(false) {
                         error!("Failed to activate DRM device on session resume: {e}");
                         data.active = false;
                         data.vblank_pending = false;
                         data.vblank_since = None;
                         return;
+                    }
+                    if let Err(()) = data.libinput_context.resume() {
+                        error!("Failed to resume libinput context on session resume");
+                        // Continue anyway — DRM is active, input may recover on next event
                     }
                     data.active = true;
                     data.vblank_pending = false;
@@ -1627,6 +1635,8 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
     libinput_context
         .udev_assign_seat(&session.seat())
         .map_err(|()| anyhow::anyhow!("Failed to assign seat to libinput"))?;
+    // Keep a clone for suspend/resume on VT switch; the original is consumed by the backend.
+    let libinput_context_for_vt = libinput_context.clone();
     let libinput_backend = LibinputInputBackend::new(libinput_context);
 
     // Prepare frame pacing using the active DRM mode refresh when available.
@@ -1727,6 +1737,7 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         total_flips: 0,
         current_slot: None,
         pending_slot: None,
+        libinput_context: libinput_context_for_vt,
     };
 
     let signal_for_handler = loop_signal.clone();

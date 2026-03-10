@@ -1400,11 +1400,11 @@ fn process_electron_message(
                                         .and_then(|v| v.as_f64())
                                         .unwrap_or(0.0);
 
-                                    // Derive pointer_location from the window's
-                                    // compositor-space position so focus math is
-                                    // consistent (the hardware pointer lives in host
-                                    // compositor space and is not meaningful here).
-                                    state.pointer_location = (
+                                    // Client dictates event dispatch; compositor
+                                    // owns pointer_location (hardware).  Compute
+                                    // a synthetic location for Smithay without
+                                    // overwriting pointer_location.
+                                    let dispatch_location: Point<f64, Logical> = (
                                         loc.x as f64 + px,
                                         loc.y as f64 + py,
                                     ).into();
@@ -1428,7 +1428,7 @@ fn process_electron_message(
                                             state,
                                             focus,
                                             &smithay::input::pointer::MotionEvent {
-                                                location: state.pointer_location,
+                                                location: dispatch_location,
                                                 serial,
                                                 time,
                                             },

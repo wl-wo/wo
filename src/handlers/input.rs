@@ -155,11 +155,14 @@ impl WoState {
         let delta = (event.delta_x(), event.delta_y());
 
         let current = self.pointer_location;
-        self.pointer_location = (
+        let new_pos: smithay::utils::Point<f64, smithay::utils::Logical> = (
             (current.x + delta.0).clamp(0.0, self.output_size.0 as f64),
             (current.y + delta.1).clamp(0.0, self.output_size.1 as f64),
         )
             .into();
+
+        // Hardware is the sole source of truth for pointer position.
+        self.pointer_location = new_pos;
 
         // Process active grab (interactive move/resize) before normal dispatch
         if let Some(ref grab) = self.grab_state.clone() {
@@ -232,9 +235,12 @@ impl WoState {
     }
 
     fn on_pointer_motion_abs<B: InputBackend>(&mut self, event: B::PointerMotionAbsoluteEvent) {
-        self.pointer_location = event
+        let new_pos: smithay::utils::Point<f64, smithay::utils::Logical> = event
             .position_transformed((self.output_size.0 as i32, self.output_size.1 as i32).into())
             .into();
+
+        // Hardware is the sole source of truth for pointer position.
+        self.pointer_location = new_pos;
 
         // Process active grab (interactive move/resize) before normal dispatch
         if let Some(ref grab) = self.grab_state.clone() {
@@ -342,20 +348,10 @@ impl WoState {
         };
         let serial = SERIAL_COUNTER.next_serial();
 
-        // When the cursor is over an Electron-managed window, the compositor
-        // must NOT touch Smithay's pointer state at all.  Electron/comraw owns
-        // the cursor: it renders the cursor sprite, tracks position inside its
-        // canvas, and — when the cursor is over an embedded native Wayland/X11
-        // window — sends a ForwardedPointer IPC back to the compositor.  That
-        // forwarded path (handle_forwarded_pointer_event) is the ONLY code that
-        // should call pointer.motion() for native windows.
-        //
-        // Previously this block called pointer.motion(None) to "clear" native
-        // focus, but Smithay interprets that as a real motion event and sends
-        // wl_pointer.leave to any focused client.  When Electron's forwarded
-        // event arrives a moment later and calls pointer.motion(Some(focus)),
-        // Smithay sends wl_pointer.enter — so the client sees
-        // leave→enter→leave→enter every frame, causing cursor rubberbanding.
+        // When the cursor is over an Electron-managed window, the client
+        // (comraw) owns event dispatching.  The compositor sends the position
+        // via IPC (above) but does NOT call pointer.motion() — the client's
+        // forwarded pointer_motion action handles that.
         if under_electron.is_some() && self.electron_ipc.is_some() {
             return;
         }
@@ -515,8 +511,12 @@ impl WoState {
         }
     }
 
-    /// Forward a pointer motion event received from the Electron web UI to the
+    /// Forward a pointer motion event from the client (comraw/Electron) to the
     /// Wayland surface under the given window-local coordinates.
+    ///
+    /// The client controls event dispatch to windows it renders.  However, the
+    /// compositor remains the sole authority on `pointer_location` (hardware
+    /// input) — this function does NOT overwrite it.
     pub fn handle_forwarded_pointer_event(&mut self, window_name: &str, x: f64, y: f64) {
         use smithay::{
             desktop::WindowSurfaceType,
@@ -535,18 +535,16 @@ impl WoState {
         };
         let serial = SERIAL_COUNTER.next_serial();
 
-        // (x, y) from the web UI are relative to the rendered surface buffer
-        // origin (includes CSD decorations/shadows).
-        //
-        // Derive a consistent pointer_location from the window's compositor-
-        // space position so that focus math works correctly.  The hardware
-        // pointer_location is meaningless here because it lives in the host
-        // compositor's coordinate space (nested mode) while our Space uses
-        // its own internal coordinates.
         let win_loc = self.space.element_location(&window).unwrap_or_default();
-        let global_x = win_loc.x as f64 + x;
-        let global_y = win_loc.y as f64 + y;
-        self.pointer_location = Point::from((global_x, global_y));
+
+        // Compute a synthetic global location from the client-provided
+        // surface-local coords.  This is used ONLY for the MotionEvent so
+        // Smithay derives the correct wl_pointer surface-local coordinates.
+        // pointer_location itself is NOT modified.
+        let dispatch_location: Point<f64, Logical> = (
+            win_loc.x as f64 + x,
+            win_loc.y as f64 + y,
+        ).into();
 
         let focus = window
             .surface_under(Point::<f64, Logical>::from((x, y)), WindowSurfaceType::ALL)
@@ -562,7 +560,7 @@ impl WoState {
             self,
             focus,
             &MotionEvent {
-                location: self.pointer_location,
+                location: dispatch_location,
                 serial,
                 time: 0,
             },
