@@ -45,7 +45,8 @@ var MAGIC = {
   FORWARD_POINTER: 1464815685,
   FORWARD_KEYBOARD: 1464814405,
   FORWARD_RELATIVE_POINTER: 1464816197,
-  POINTER_LOCK_REQUEST: 1464815692
+  POINTER_LOCK_REQUEST: 1464815692,
+  ENV_UPDATE: 1464812885
 };
 function stringToBuffer(str) {
   return Buffer.from(str, "utf-8");
@@ -1143,8 +1144,8 @@ function connectToCompositor() {
           if (compositorRxBuffer.length < 8)
             break;
           const nameLen = compositorRxBuffer.readUInt32LE(4);
-          const headerSize = 8 + nameLen + 20;
-          if (compositorRxBuffer.length < headerSize)
+          const baseHeader = 8 + nameLen + 20 + 4;
+          if (compositorRxBuffer.length < baseHeader)
             break;
           let off = 8;
           const windowName = compositorRxBuffer.slice(off, off + nameLen).toString("utf8");
@@ -1158,29 +1159,68 @@ function connectToCompositor() {
           const pid = compositorRxBuffer.readUInt32LE(off);
           off += 4;
           const fd = compositorRxBuffer.readUInt32LE(off);
-          compositorRxBuffer = compositorRxBuffer.slice(headerSize);
+          off += 4;
+          const numRects = compositorRxBuffer.readUInt32LE(off);
+          off += 4;
+          const fullHeader = baseHeader + numRects * 16;
+          if (compositorRxBuffer.length < fullHeader)
+            break;
+          const damageRects = [];
+          for (let i = 0;i < numRects; i++) {
+            damageRects.push({
+              x: compositorRxBuffer.readUInt32LE(off),
+              y: compositorRxBuffer.readUInt32LE(off + 4),
+              width: compositorRxBuffer.readUInt32LE(off + 8),
+              height: compositorRxBuffer.readUInt32LE(off + 12)
+            });
+            off += 16;
+          }
+          compositorRxBuffer = compositorRxBuffer.slice(fullHeader);
           try {
             const extFd = getOrOpenShmFd(windowName, pid, fd);
-            const size = sbStride * sbHeight;
-            const safeBuffer = getReusableShmBuffer(windowName, size);
-            let totalRead = 0;
-            while (totalRead < size) {
-              const bytesRead = fs.readSync(extFd, safeBuffer, totalRead, size - totalRead, totalRead);
-              if (bytesRead <= 0)
-                break;
-              totalRead += bytesRead;
-            }
-            if (totalRead === size) {
-              surfaceBufferPending.set(windowName, {
-                name: windowName,
-                width: sbWidth,
-                height: sbHeight,
-                stride: sbStride,
-                pixels: safeBuffer
-              });
-              if (!surfaceBufferTimer) {
-                surfaceBufferTimer = setTimeout(flushSurfaceBuffers, 10);
+            const fullSize = sbStride * sbHeight;
+            const safeBuffer = getReusableShmBuffer(windowName, fullSize);
+            const hasUsableRects = damageRects.length > 0 && damageRects.length < 64;
+            if (hasUsableRects) {
+              let minY = sbHeight, maxY = 0;
+              for (const r of damageRects) {
+                const ry = Math.max(0, r.y);
+                const ryEnd = Math.min(sbHeight, r.y + r.height);
+                if (ry < minY)
+                  minY = ry;
+                if (ryEnd > maxY)
+                  maxY = ryEnd;
               }
+              if (minY < maxY) {
+                const readOffset = minY * sbStride;
+                const readLen = (maxY - minY) * sbStride;
+                let totalRead = 0;
+                while (totalRead < readLen) {
+                  const bytesRead = fs.readSync(extFd, safeBuffer, readOffset + totalRead, readLen - totalRead, readOffset + totalRead);
+                  if (bytesRead <= 0)
+                    break;
+                  totalRead += bytesRead;
+                }
+              }
+            } else {
+              let totalRead = 0;
+              while (totalRead < fullSize) {
+                const bytesRead = fs.readSync(extFd, safeBuffer, totalRead, fullSize - totalRead, totalRead);
+                if (bytesRead <= 0)
+                  break;
+                totalRead += bytesRead;
+              }
+            }
+            surfaceBufferPending.set(windowName, {
+              name: windowName,
+              width: sbWidth,
+              height: sbHeight,
+              stride: sbStride,
+              pixels: safeBuffer,
+              damageRects: hasUsableRects ? damageRects : undefined
+            });
+            if (!surfaceBufferTimer) {
+              surfaceBufferTimer = setTimeout(flushSurfaceBuffers, 10);
             }
           } catch (err) {
             const cached = shmFdCache.get(windowName);
@@ -1254,6 +1294,28 @@ function connectToCompositor() {
           compositorRxBuffer = compositorRxBuffer.slice(12 + nameLen);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("wo:pointer-lock-request", { window: windowName, lock });
+          }
+          continue;
+        }
+        if (magic === MAGIC.ENV_UPDATE) {
+          if (compositorRxBuffer.length < 8)
+            break;
+          const jsonLen = compositorRxBuffer.readUInt32LE(4);
+          if (compositorRxBuffer.length < 8 + jsonLen)
+            break;
+          const jsonStr = compositorRxBuffer.slice(8, 8 + jsonLen).toString("utf8");
+          compositorRxBuffer = compositorRxBuffer.slice(8 + jsonLen);
+          try {
+            const vars = JSON.parse(jsonStr);
+            for (const [key, value] of Object.entries(vars)) {
+              process.env[key] = value;
+              debugLog(`[Wo] env update: ${key}=${value}`);
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("wo:env-update", vars);
+            }
+          } catch (err) {
+            debugLog("[Wo] ENV_UPDATE parse error:", err);
           }
           continue;
         }

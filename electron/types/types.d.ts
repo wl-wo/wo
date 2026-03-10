@@ -302,6 +302,7 @@ export interface SurfaceBufferData {
   height: number;
   stride: number;
   pixels: Uint8Array;
+  damageRects?: DamageRect[];
 }
 
 /**

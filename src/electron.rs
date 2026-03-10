@@ -227,6 +227,9 @@ impl ElectronClientConnection {
     /// Wire format: magic(4) + name_len(4) + name(N) + width(4) + height(4) + stride(4) + pid(4) + fd(4)
     /// The compositor PID and fd number let Electron open /proc/<pid>/fd/<fd>
     /// to mmap pixels without copying.
+    /// Wire format:
+    ///   magic(4) + name_len(4) + name(N) + width(4) + height(4) + stride(4) + pid(4) + fd(4)
+    ///   + num_rects(4) + [x(4) + y(4) + w(4) + h(4)] * num_rects
     pub fn send_shm_buffer(
         &self,
         window_name: &str,
@@ -235,9 +238,11 @@ impl ElectronClientConnection {
         stride: u32,
         pid: u32,
         memfd_fd: i32,
+        damage_rects: &[crate::state::DamageRect],
     ) -> Result<()> {
         let name_bytes = window_name.as_bytes();
-        let header_len = 4 + 4 + name_bytes.len() + 4 + 4 + 4 + 4 + 4;
+        let num_rects = damage_rects.len() as u32;
+        let header_len = 4 + 4 + name_bytes.len() + 4 + 4 + 4 + 4 + 4 + 4 + (damage_rects.len() * 16);
         let mut buf = vec![0u8; header_len];
         let mut off = 0;
         buf[off..off + 4].copy_from_slice(&MAGIC_SHM_BUFFER.to_le_bytes());
@@ -255,6 +260,19 @@ impl ElectronClientConnection {
         buf[off..off + 4].copy_from_slice(&pid.to_le_bytes());
         off += 4;
         buf[off..off + 4].copy_from_slice(&(memfd_fd as u32).to_le_bytes());
+        off += 4;
+        buf[off..off + 4].copy_from_slice(&num_rects.to_le_bytes());
+        off += 4;
+        for rect in damage_rects {
+            buf[off..off + 4].copy_from_slice(&(rect.x as u32).to_le_bytes());
+            off += 4;
+            buf[off..off + 4].copy_from_slice(&(rect.y as u32).to_le_bytes());
+            off += 4;
+            buf[off..off + 4].copy_from_slice(&(rect.width as u32).to_le_bytes());
+            off += 4;
+            buf[off..off + 4].copy_from_slice(&(rect.height as u32).to_le_bytes());
+            off += 4;
+        }
 
         self.write_bytes_nonblocking(&buf)
     }
@@ -627,7 +645,10 @@ impl ElectronIpc {
             .with_context(|| format!("binding IPC socket {socket_path}"))?;
         info!(socket = socket_path, "IPC socket listening");
 
-        let (tx, rx) = mpsc::channel(8);
+        // 64 slots to avoid frame/input starvation under load.  The old
+        // value of 8 caused silent frame drops when games submitted at
+        // >60 FPS while input events competed for the same channel.
+        let (tx, rx) = mpsc::channel(64);
         let tx2 = tx.clone();
         let clients = Arc::new(Mutex::new(HashMap::new()));
         let clients2 = clients.clone();
@@ -777,6 +798,7 @@ impl ElectronIpc {
         stride: u32,
         pid: u32,
         memfd_fd: i32,
+        damage_rects: &[crate::state::DamageRect],
     ) -> Result<()> {
         let snapshot: Vec<_> = {
             let clients = self.clients.lock().unwrap();
@@ -784,7 +806,7 @@ impl ElectronIpc {
         };
         // clients Mutex released — safe to do I/O.
         for client in &snapshot {
-            if let Err(e) = client.send_shm_buffer(window_name, width, height, stride, pid, memfd_fd) {
+            if let Err(e) = client.send_shm_buffer(window_name, width, height, stride, pid, memfd_fd, damage_rects) {
                 debug!("shm buffer to '{}' dropped: {e:#}", client.name);
             }
         }

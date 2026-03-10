@@ -408,10 +408,19 @@ impl WoState {
 
             if let Some(ref win_name) = under_window {
                 if button_state == ButtonState::Pressed {
-                    self.keyboard_window_focus = Some(win_name.clone());
-                    // Clear Wayland keyboard focus so Electron receives keys.
-                    let keyboard = self.seat.get_keyboard().unwrap();
-                    keyboard.set_focus(self, None, serial);
+                    // Only set keyboard focus to the Electron window and clear
+                    // Wayland focus if we don't already have a native window
+                    // focused via the forwarded path.  If the user clicked on a
+                    // native window canvas inside Electron/comraw, the forwarded
+                    // pointer_button action will arrive shortly and set the
+                    // correct Wayland surface focus.  Clearing it here would
+                    // cause focus to bounce (clear → set → clear → set).
+                    let has_native_focus = self.seat.get_keyboard()
+                        .map(|kb| kb.current_focus().is_some())
+                        .unwrap_or(false);
+                    if !has_native_focus {
+                        self.keyboard_window_focus = Some(win_name.clone());
+                    }
                 }
 
                 if let Some(ref ipc) = self.electron_ipc {
@@ -520,23 +529,34 @@ impl WoState {
             None => return,
         };
 
-        // Do NOT overwrite self.pointer_location here.  The hardware input
-        // handler (on_pointer_motion / on_pointer_motion_abs) already set it
-        // to the authoritative screen position.  Recomputing it from
-        // element_location + geo offsets uses a different coordinate system
-        // and causes the position to ping-pong between the hardware value
-        // and the recomputed value, producing visible rubberbanding.
-
         let pointer = match self.seat.get_pointer() {
             Some(p) => p,
             None => return,
         };
         let serial = SERIAL_COUNTER.next_serial();
 
-        // Coordinates (x, y) are already relative to the window/surface origin.
+        // (x, y) from the web UI are relative to the rendered surface buffer
+        // origin (includes CSD decorations/shadows).
+        //
+        // Derive a consistent pointer_location from the window's compositor-
+        // space position so that focus math works correctly.  The hardware
+        // pointer_location is meaningless here because it lives in the host
+        // compositor's coordinate space (nested mode) while our Space uses
+        // its own internal coordinates.
+        let win_loc = self.space.element_location(&window).unwrap_or_default();
+        let global_x = win_loc.x as f64 + x;
+        let global_y = win_loc.y as f64 + y;
+        self.pointer_location = Point::from((global_x, global_y));
+
         let focus = window
             .surface_under(Point::<f64, Logical>::from((x, y)), WindowSurfaceType::ALL)
-            .map(|(s, p)| (s, p.to_f64()));
+            .map(|(s, offset)| {
+                let focus_pos: Point<f64, Logical> = (
+                    win_loc.x as f64 + offset.x as f64,
+                    win_loc.y as f64 + offset.y as f64,
+                ).into();
+                (s, focus_pos)
+            });
 
         pointer.motion(
             self,

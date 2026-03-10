@@ -747,9 +747,10 @@ pub fn run_nested(config: Config) -> Result<()> {
             drop(target);
 
             // Export dirty Wayland surfaces via offscreen rendering to SHM
-            let mut exported_pixels: Vec<(String, u32, u32, u32, Vec<u8>)> = Vec::new();
+            let mut exported_pixels: Vec<crate::state::ShmExport> = Vec::new();
             {
                 use smithay::reexports::wayland_server::Resource;
+                use smithay::wayland::compositor::{with_states, Damage, SurfaceAttributes};
 
                 let dirty: Vec<_> = state.dirty_surfaces.drain().collect();
 
@@ -788,10 +789,33 @@ pub fn run_nested(config: Config) -> Result<()> {
 
                     let Some(geo) = window_geo else { continue };
 
+                    // Extract Wayland damage rects for partial-update optimization.
+                    // Empty damage = full frame (surfaces in dirty list always get exported).
+                    let damage_rects: Vec<crate::state::DamageRect> = with_states(&surface, |states| {
+                        let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+                        let current = attrs.current();
+                        current.damage.iter().map(|d| {
+                            match d {
+                                Damage::Buffer(rect) => crate::state::DamageRect {
+                                    x: rect.loc.x,
+                                    y: rect.loc.y,
+                                    width: rect.size.w,
+                                    height: rect.size.h,
+                                },
+                                Damage::Surface(rect) => {
+                                    let scale = current.buffer_scale;
+                                    crate::state::DamageRect {
+                                        x: rect.loc.x * scale,
+                                        y: rect.loc.y * scale,
+                                        width: rect.size.w * scale,
+                                        height: rect.size.h * scale,
+                                    }
+                                }
+                            }
+                        }).collect()
+                    });
+
                     // Calculate bbox (bounding box) for CSD windows with shadows/decorations
-                    // geo.loc is the offset from surface origin to content area
-                    // For libadwaita: geo.loc is typically (10, 10) for 10px shadows
-                    // bbox needs to include the decorations, so expand by geo.loc on both sides
                     let bbox_w = (geo.size.w + geo.loc.x.max(0) * 2) as u32;
                     let bbox_h = (geo.size.h + geo.loc.y.max(0) * 2) as u32;
 
@@ -801,9 +825,7 @@ pub fn run_nested(config: Config) -> Result<()> {
                     }
 
                     // Read SHM buffer directly (for software-rendered clients)
-                    // TODO: Implement GL offscreen rendering for DMABUF/hardware clients
                     use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
-                    use smithay::wayland::compositor::with_states;
                     use smithay::wayland::shm::with_buffer_contents;
 
                     let pixels_opt: Option<(u32, u32, u32, Vec<u8>)> =
@@ -831,7 +853,14 @@ pub fn run_nested(config: Config) -> Result<()> {
                         });
 
                     if let Some((bw, bh, stride, pixels)) = pixels_opt {
-                        exported_pixels.push((window_name, bw, bh, stride, pixels));
+                        exported_pixels.push(crate::state::ShmExport {
+                            window_name,
+                            width: bw,
+                            height: bh,
+                            stride,
+                            pixels,
+                            damage_rects,
+                        });
                     } else if let Some(ref ipc) = state.electron_ipc {
                         // If no SHM pixels, check if it's a DMABUF (optimal for games)
                         let dmabuf_opt = with_states(&surface, |states| {
@@ -970,49 +999,64 @@ pub fn run_nested(config: Config) -> Result<()> {
                 });
             }
 
-            // Write exported pixel buffers to SHM and broadcast to Electron
+            // Write exported pixel buffers to SHM and broadcast to Electron.
+            // Uses ping-pong double-buffered memfds (same as DRM path).
             if did_bind {
                 use std::os::unix::io::AsRawFd;
 
                 let exports = std::mem::take(&mut state.pending_shm_exports);
-                for (window_name, w, h, stride, pixels) in exports {
-                    let memfd_fd = state
+                for export in exports {
+                    let pair = state
                         .window_shm_buffers
-                        .entry(window_name.clone())
+                        .entry(export.window_name.clone())
                         .or_insert_with(|| {
-                            nix::sys::memfd::memfd_create(
+                            let a = nix::sys::memfd::memfd_create(
                                 std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
                                 MFdFlags::MFD_CLOEXEC,
                             )
-                            .expect("creating memfd")
+                            .expect("creating memfd A");
+                            let b = nix::sys::memfd::memfd_create(
+                                std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
+                                MFdFlags::MFD_CLOEXEC,
+                            )
+                            .expect("creating memfd B");
+                            [a, b]
                         });
 
-                    let size = pixels.len() as i64;
-                    let stat = nix::sys::stat::fstat(&*memfd_fd).unwrap();
+                    let idx = state.window_shm_write_idx
+                        .entry(export.window_name.clone())
+                        .or_insert(0);
+                    let memfd_fd = &pair[*idx];
+
+                    let size = export.pixels.len() as i64;
+                    let stat = nix::sys::stat::fstat(memfd_fd).unwrap();
                     if stat.st_size != size {
-                        nix::unistd::ftruncate(&*memfd_fd, size).expect("truncating memfd");
+                        nix::unistd::ftruncate(memfd_fd, size).expect("truncating memfd");
                     }
 
-                    nix::unistd::lseek(&*memfd_fd, 0, nix::unistd::Whence::SeekSet)
+                    nix::unistd::lseek(memfd_fd, 0, nix::unistd::Whence::SeekSet)
                         .expect("seeking memfd");
-                    nix::unistd::write(&*memfd_fd, &pixels).expect("writing to memfd");
+                    nix::unistd::write(memfd_fd, &export.pixels).expect("writing to memfd");
 
                     if let Some(ref ipc) = state.electron_ipc {
                         let pid = std::process::id();
                         if let Err(e) = ipc.broadcast_shm_buffer(
-                            &window_name,
-                            w,
-                            h,
-                            stride,
+                            &export.window_name,
+                            export.width,
+                            export.height,
+                            export.stride,
                             pid,
                             memfd_fd.as_raw_fd() as i32,
+                            &export.damage_rects,
                         ) {
                             debug!(
                                 "nested shm buffer broadcast failed for {}: {}",
-                                window_name, e
+                                export.window_name, e
                             );
                         }
                     }
+
+                    *idx = 1 - *idx;
                 }
             }
 
@@ -1356,25 +1400,26 @@ fn process_electron_message(
                                         .and_then(|v| v.as_f64())
                                         .unwrap_or(0.0);
 
-                                    let geo = window.geometry();
-                                    let surface_x = px;
-                                    let surface_y = py;
+                                    // Derive pointer_location from the window's
+                                    // compositor-space position so focus math is
+                                    // consistent (the hardware pointer lives in host
+                                    // compositor space and is not meaningful here).
+                                    state.pointer_location = (
+                                        loc.x as f64 + px,
+                                        loc.y as f64 + py,
+                                    ).into();
 
-                                    // Do NOT overwrite state.pointer_location.
-                                    // The hardware input handler already set it
-                                    // to the authoritative position; recomputing
-                                    // from element_location + geo causes ping-pong.
                                     let under = window.surface_under(
-                                        (surface_x, surface_y),
+                                        (px, py),
                                         smithay::desktop::WindowSurfaceType::ALL,
                                     );
                                     let focus = under.map(|(s, off)| {
-                                        let surface_global: Point<f64, Logical> = (
-                                            loc.x as f64 - geo.loc.x.max(0) as f64 + off.x as f64,
-                                            loc.y as f64 - geo.loc.y.max(0) as f64 + off.y as f64,
+                                        let focus_pos: Point<f64, Logical> = (
+                                            loc.x as f64 + off.x as f64,
+                                            loc.y as f64 + off.y as f64,
                                         )
                                             .into();
-                                        (s, surface_global)
+                                        (s, focus_pos)
                                     });
                                     let time = event_start_time.elapsed().as_millis() as u32;
                                     if let Some(pointer) = state.seat.get_pointer() {
@@ -1418,12 +1463,39 @@ fn process_electron_message(
                                         .and_then(|v| v.as_f64())
                                         .unwrap_or(0.0);
 
-                                    let geo = window.geometry();
-                                    let surface_x = px;
-                                    let surface_y = py;
+                                    // Update pointer_location consistently
+                                    state.pointer_location = (
+                                        loc.x as f64 + px,
+                                        loc.y as f64 + py,
+                                    ).into();
 
-                                    // Do NOT overwrite state.pointer_location
-                                    // (same rationale as pointer_motion above).
+                                    // Send motion first so focus is correct for the button
+                                    let under = window.surface_under(
+                                        (px, py),
+                                        smithay::desktop::WindowSurfaceType::ALL,
+                                    );
+                                    let focus = under.map(|(s, off)| {
+                                        let focus_pos: Point<f64, Logical> = (
+                                            loc.x as f64 + off.x as f64,
+                                            loc.y as f64 + off.y as f64,
+                                        ).into();
+                                        (s, focus_pos)
+                                    });
+                                    let time = event_start_time.elapsed().as_millis() as u32;
+                                    if let Some(pointer) = state.seat.get_pointer() {
+                                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                                        pointer.motion(
+                                            state,
+                                            focus.clone(),
+                                            &smithay::input::pointer::MotionEvent {
+                                                location: state.pointer_location,
+                                                serial,
+                                                time,
+                                            },
+                                        );
+                                        pointer.frame(state);
+                                    }
+
                                     if pressed {
                                         let surface = window
                                             .toplevel()
@@ -1444,7 +1516,6 @@ fn process_electron_message(
                                     } else {
                                         smithay::backend::input::ButtonState::Released
                                     };
-                                    let time = event_start_time.elapsed().as_millis() as u32;
                                     if let Some(pointer) = state.seat.get_pointer() {
                                         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                                         pointer.button(

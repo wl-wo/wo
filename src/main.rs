@@ -83,6 +83,9 @@ struct EventLoopData {
     autostart_tasks: Vec<(crate::config::AutostartConfig, std::time::Instant)>,
     first_render: bool,
     wayland_socket: ListeningSocket,
+    /// Unused after frame throttle rework — kept as placeholder for future
+    /// per-window frame stats if needed.
+    #[allow(dead_code)]
     frame_timestamps: std::collections::HashMap<String, Instant>,
     gles_tex_cache: std::collections::HashMap<String, smithay::backend::renderer::gles::GlesTexture>,
     input_events_pending: bool,
@@ -718,15 +721,17 @@ fn render_frame(data: &mut EventLoopData) {
             );
         }
 
-        // Export dirty Wayland surfaces to Electron clients via DMABUF/SHM
+        // Export dirty Wayland surfaces to Electron clients via DMABUF/SHM.
+        // Uses Wayland damage rects to skip unchanged surfaces entirely and to
+        // avoid full-buffer reads when only a small region changed.
         if data.state.electron_ipc.is_some() {
             use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
             use smithay::reexports::wayland_server::Resource;
-            use smithay::wayland::compositor::with_states;
+            use smithay::wayland::compositor::{with_states, Damage, SurfaceAttributes};
             use smithay::wayland::shm::with_buffer_contents;
             use tracing::debug;
 
-            let mut exported_pixels: Vec<(String, u32, u32, u32, Vec<u8>)> = Vec::new();
+            let mut exported_pixels: Vec<crate::state::ShmExport> = Vec::new();
 
             for surface in &dirty_surfaces {
                 let surface_id = surface.id();
@@ -766,6 +771,33 @@ fn render_frame(data: &mut EventLoopData) {
 
                 let Some(_geo) = window_geo else { continue };
 
+                // Extract Wayland damage rects for partial-update optimization.
+                // Empty damage = full frame (surfaces in dirty_surfaces always get exported).
+                let damage_rects: Vec<crate::state::DamageRect> = with_states(surface, |states| {
+                    let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+                    let current = attrs.current();
+                    current.damage.iter().map(|d| {
+                        match d {
+                            Damage::Buffer(rect) => crate::state::DamageRect {
+                                x: rect.loc.x,
+                                y: rect.loc.y,
+                                width: rect.size.w,
+                                height: rect.size.h,
+                            },
+                            Damage::Surface(rect) => {
+                                // Surface-coordinate damage; apply buffer_scale
+                                let scale = current.buffer_scale;
+                                crate::state::DamageRect {
+                                    x: rect.loc.x * scale,
+                                    y: rect.loc.y * scale,
+                                    width: rect.size.w * scale,
+                                    height: rect.size.h * scale,
+                                }
+                            }
+                        }
+                    }).collect()
+                });
+
                 // Try SHM buffer first (software-rendered clients)
                 let pixels_opt: Option<(u32, u32, u32, Vec<u8>)> =
                     with_states(surface, |states| {
@@ -792,7 +824,14 @@ fn render_frame(data: &mut EventLoopData) {
                     });
 
                 if let Some((bw, bh, stride, pixels)) = pixels_opt {
-                    exported_pixels.push((window_name, bw, bh, stride, pixels));
+                    exported_pixels.push(crate::state::ShmExport {
+                        window_name,
+                        width: bw,
+                        height: bh,
+                        stride,
+                        pixels,
+                        damage_rects,
+                    });
                 } else if let Some(ref ipc) = data.state.electron_ipc {
                     // Try DMABUF (hardware-rendered clients / games)
                     let dmabuf_opt = with_states(surface, |states| {
@@ -867,48 +906,66 @@ fn render_frame(data: &mut EventLoopData) {
     data.state.damaged_windows.clear();
     data.state.dirty_surfaces.clear();
 
-    // Write exported SHM pixel buffers to memfd and broadcast to Electron
+    // Write exported SHM pixel buffers to memfd and broadcast to Electron.
+    // Uses ping-pong double buffering: write to one memfd while Electron
+    // reads from the other, eliminating the read/write race condition.
     {
         use std::os::unix::io::AsRawFd;
         use nix::sys::memfd::MFdFlags;
         use tracing::debug;
 
         let exports = std::mem::take(&mut data.state.pending_shm_exports);
-        for (window_name, w, h, stride, pixels) in exports {
-            let memfd_fd = data.state
+        for export in exports {
+            let pair = data.state
                 .window_shm_buffers
-                .entry(window_name.clone())
+                .entry(export.window_name.clone())
                 .or_insert_with(|| {
-                    nix::sys::memfd::memfd_create(
+                    let a = nix::sys::memfd::memfd_create(
                         std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
                         MFdFlags::MFD_CLOEXEC,
                     )
-                    .expect("creating memfd")
+                    .expect("creating memfd A");
+                    let b = nix::sys::memfd::memfd_create(
+                        std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
+                        MFdFlags::MFD_CLOEXEC,
+                    )
+                    .expect("creating memfd B");
+                    [a, b]
                 });
 
-            let size = pixels.len() as i64;
-            let stat = nix::sys::stat::fstat(&*memfd_fd).unwrap();
+            // Pick the write slot (alternates each frame)
+            let idx = data.state.window_shm_write_idx
+                .entry(export.window_name.clone())
+                .or_insert(0);
+            let memfd_fd = &pair[*idx];
+
+            let size = export.pixels.len() as i64;
+            let stat = nix::sys::stat::fstat(memfd_fd).unwrap();
             if stat.st_size != size {
-                nix::unistd::ftruncate(&*memfd_fd, size).expect("truncating memfd");
+                nix::unistd::ftruncate(memfd_fd, size).expect("truncating memfd");
             }
 
-            nix::unistd::lseek(&*memfd_fd, 0, nix::unistd::Whence::SeekSet)
+            nix::unistd::lseek(memfd_fd, 0, nix::unistd::Whence::SeekSet)
                 .expect("seeking memfd");
-            nix::unistd::write(&*memfd_fd, &pixels).expect("writing to memfd");
+            nix::unistd::write(memfd_fd, &export.pixels).expect("writing to memfd");
 
             if let Some(ref ipc) = data.state.electron_ipc {
                 let pid = std::process::id();
                 if let Err(e) = ipc.broadcast_shm_buffer(
-                    &window_name,
-                    w,
-                    h,
-                    stride,
+                    &export.window_name,
+                    export.width,
+                    export.height,
+                    export.stride,
                     pid,
                     memfd_fd.as_raw_fd() as i32,
+                    &export.damage_rects,
                 ) {
-                    debug!("DRM shm buffer broadcast failed for {}: {}", window_name, e);
+                    debug!("DRM shm buffer broadcast failed for {}: {}", export.window_name, e);
                 }
             }
+
+            // Flip to the other buffer for next frame
+            *idx = 1 - *idx;
         }
     }
 
@@ -1803,31 +1860,25 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
                 }
             }
 
-            // Process frames with backpressure (8ms throttle per window)
-            let now = Instant::now();
+            // Coalesce frames: keep only the latest frame per window.
+            // Previous approach hard-dropped frames within 8ms which could
+            // lose the newest frame when a burst arrived.  Now we always
+            // import the freshest frame; intermediates are simply overwritten.
             let mut latest_frames = std::collections::HashMap::new();
             for msg in frames_batch {
                 if let crate::electron::ElectronMessage::Frame(frame) = msg {
                     let name = frame.name.clone();
-                    
-                    if let Some(last_ts) = data.frame_timestamps.get(&name) {
-                        if now.duration_since(*last_ts) < Duration::from_millis(8) {
-                            trace!("Dropping frame {} due to backpressure", name);
-                            continue;
-                        }
-                    }
-                    
-                    data.frame_timestamps.insert(name.clone(), now);
                     latest_frames.insert(name, frame);
                 }
             }
 
-            // Import latest frames
+            // Import latest frames (non-blocking: try_lock avoids stalling
+            // the event loop when the renderer is busy with a page flip).
             for (_name, frame) in latest_frames {
                 let frame_name = frame.name.clone();
                 let frame_dims = (frame.width, frame.height);
                 if let Some(renderer_arc) = data.state.backend.renderer() {
-                    match renderer_arc.lock() {
+                    match renderer_arc.try_lock() {
                         Ok(ref mut renderer) => {
                             match import_electron_frame(renderer, frame) {
                                 Ok((tex, cached)) => {
@@ -1846,7 +1897,13 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
                                 Err(e) => warn!("DMABUF import failed for '{}': {e:#}", frame_name),
                             }
                         }
-                        Err(e) => warn!("Failed to lock renderer: {e}"),
+                        Err(_) => {
+                            // Renderer is held by the render path; the cached
+                            // texture from the previous frame is still valid so
+                            // the display won't flicker.  The next event-loop
+                            // tick will pick up any newer frame.
+                            trace!("renderer busy, deferring frame import for '{}'", frame_name);
+                        }
                     }
                 }
             }

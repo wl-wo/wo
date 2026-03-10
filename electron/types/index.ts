@@ -17,6 +17,8 @@ export type {
   WindowMetadataEvent,
   FocusChangeEvent,
   DamageFramePayload,
+  DamageRect,
+  DamagePatch,
   RendererDamageHelper,
   RendererDamageHelperOptions,
 } from './types';

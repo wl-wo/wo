@@ -36,6 +36,25 @@ use crate::{
 use portal::WoPortal;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 
+/// A damage rectangle in buffer coordinates.
+#[derive(Debug, Clone)]
+pub struct DamageRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Buffered SHM pixel export with per-surface damage information.
+pub struct ShmExport {
+    pub window_name: String,
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub pixels: Vec<u8>,
+    pub damage_rects: Vec<DamageRect>,
+}
+
 #[derive(Default)]
 pub struct ClientData {
     pub compositor_state: CompositorClientState,
@@ -107,10 +126,13 @@ pub struct WoState {
     pub metadata_dirty: bool,
     /// Wayland surfaces that committed a new buffer and need offscreen capture.
     pub dirty_surfaces: std::collections::HashSet<WlSurface>,
-    /// Persistent SHM file descriptors (memfds) for each window.
-    pub window_shm_buffers: std::collections::HashMap<String, std::os::unix::io::OwnedFd>,
+    /// Ping-pong SHM memfd pairs per window.  Index 0 is being written by
+    /// the compositor while Electron reads index 1 (and vice versa).
+    pub window_shm_buffers: std::collections::HashMap<String, [std::os::unix::io::OwnedFd; 2]>,
+    /// Tracks which of the two memfds is the current write target (0 or 1).
+    pub window_shm_write_idx: std::collections::HashMap<String, usize>,
     /// Buffered pixel exports from offscreen rendering, written to SHM after render block.
-    pub pending_shm_exports: Vec<(String, u32, u32, u32, Vec<u8>)>,
+    pub pending_shm_exports: Vec<ShmExport>,
     pub grab_state: Option<crate::handlers::xdg_shell::GrabState>,
     pub cursor_theme_manager: CursorThemeManager,
 
@@ -307,6 +329,7 @@ impl WoState {
             metadata_dirty: true,
             dirty_surfaces: std::collections::HashSet::new(),
             window_shm_buffers: std::collections::HashMap::new(),
+            window_shm_write_idx: std::collections::HashMap::new(),
             pending_shm_exports: Vec::new(),
             grab_state: None,
             cursor_theme_manager,

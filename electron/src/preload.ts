@@ -51,8 +51,8 @@ const compositorAPI: CompositorAPI = {
   },
 
   // Surface buffer: Wayland window pixel content from compositor
-  onSurfaceBuffer: (callback: (data: { name: string; width: number; height: number; stride: number; pixels: Buffer }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: { name: string; width: number; height: number; stride: number; pixels: Buffer }) =>
+  onSurfaceBuffer: (callback: (data: { name: string; width: number; height: number; stride: number; pixels: Buffer; damageRects?: Array<{x: number; y: number; width: number; height: number}> }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { name: string; width: number; height: number; stride: number; pixels: Buffer; damageRects?: Array<{x: number; y: number; width: number; height: number}> }) =>
       callback(data);
     ipcRenderer.on('wo:surface-buffer', handler);
     return () => ipcRenderer.removeListener('wo:surface-buffer', handler);

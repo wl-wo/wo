@@ -71,7 +71,7 @@ let damageBuffer: DamageBuffer | null = null;
 let nativeDmabuf: any = null;
 let compositorRxBuffer = Buffer.alloc(0);
 // Per-window surface buffer throttle (~30fps max delivery to renderer)
-const surfaceBufferPending = new Map<string, { name: string; width: number; height: number; stride: number; pixels: Buffer }>();
+const surfaceBufferPending = new Map<string, { name: string; width: number; height: number; stride: number; pixels: Buffer; damageRects?: Array<{x: number; y: number; width: number; height: number}> }>();
 let surfaceBufferTimer: NodeJS.Timeout | null = null;
 const shmReadBufferCache = new Map<string, Buffer>();
 const shmFdCache = new Map<string, { pid: number; fd: number; extFd: number }>();
@@ -1044,8 +1044,9 @@ function connectToCompositor(): Promise<void> {
         if (magic === MAGIC.SHM_BUFFER) {
           if (compositorRxBuffer.length < 8) break;
           const nameLen = compositorRxBuffer.readUInt32LE(4);
-          const headerSize = 8 + nameLen + 20;
-          if (compositorRxBuffer.length < headerSize) break;
+          // Minimum header before we know num_rects
+          const baseHeader = 8 + nameLen + 20 + 4; // +4 for num_rects field
+          if (compositorRxBuffer.length < baseHeader) break;
           let off = 8;
           const windowName = compositorRxBuffer.slice(off, off + nameLen).toString('utf8');
           off += nameLen;
@@ -1053,31 +1054,70 @@ function connectToCompositor(): Promise<void> {
           const sbHeight = compositorRxBuffer.readUInt32LE(off); off += 4;
           const sbStride = compositorRxBuffer.readUInt32LE(off); off += 4;
           const pid = compositorRxBuffer.readUInt32LE(off); off += 4;
-          const fd = compositorRxBuffer.readUInt32LE(off);
-          compositorRxBuffer = compositorRxBuffer.slice(headerSize);
+          const fd = compositorRxBuffer.readUInt32LE(off); off += 4;
+          const numRects = compositorRxBuffer.readUInt32LE(off); off += 4;
+          const fullHeader = baseHeader + numRects * 16;
+          if (compositorRxBuffer.length < fullHeader) break;
+
+          const damageRects: Array<{x: number; y: number; width: number; height: number}> = [];
+          for (let i = 0; i < numRects; i++) {
+            damageRects.push({
+              x: compositorRxBuffer.readUInt32LE(off),
+              y: compositorRxBuffer.readUInt32LE(off + 4),
+              width: compositorRxBuffer.readUInt32LE(off + 8),
+              height: compositorRxBuffer.readUInt32LE(off + 12),
+            });
+            off += 16;
+          }
+          compositorRxBuffer = compositorRxBuffer.slice(fullHeader);
 
           try {
             const extFd = getOrOpenShmFd(windowName, pid, fd);
-            const size = sbStride * sbHeight;
-            const safeBuffer = getReusableShmBuffer(windowName, size);
-            let totalRead = 0;
-            while (totalRead < size) {
-              const bytesRead = fs.readSync(extFd, safeBuffer, totalRead, size - totalRead, totalRead);
-              if (bytesRead <= 0) break;
-              totalRead += bytesRead;
+            const fullSize = sbStride * sbHeight;
+            const safeBuffer = getReusableShmBuffer(windowName, fullSize);
+
+            // Partial read: only read damaged rows from memfd.
+            // Empty damageRects = full frame update (always do full read).
+            // Also do full read on first frame for this window (buffer is uninitialized).
+            const hasUsableRects = damageRects.length > 0 && damageRects.length < 64;
+            if (hasUsableRects) {
+              let minY = sbHeight, maxY = 0;
+              for (const r of damageRects) {
+                const ry = Math.max(0, r.y);
+                const ryEnd = Math.min(sbHeight, r.y + r.height);
+                if (ry < minY) minY = ry;
+                if (ryEnd > maxY) maxY = ryEnd;
+              }
+              if (minY < maxY) {
+                const readOffset = minY * sbStride;
+                const readLen = (maxY - minY) * sbStride;
+                let totalRead = 0;
+                while (totalRead < readLen) {
+                  const bytesRead = fs.readSync(extFd, safeBuffer, readOffset + totalRead, readLen - totalRead, readOffset + totalRead);
+                  if (bytesRead <= 0) break;
+                  totalRead += bytesRead;
+                }
+              }
+            } else {
+              // Full read (no rects, too many rects, or first frame)
+              let totalRead = 0;
+              while (totalRead < fullSize) {
+                const bytesRead = fs.readSync(extFd, safeBuffer, totalRead, fullSize - totalRead, totalRead);
+                if (bytesRead <= 0) break;
+                totalRead += bytesRead;
+              }
             }
 
-            if (totalRead === size) {
-              surfaceBufferPending.set(windowName, {
-                name: windowName,
-                width: sbWidth,
-                height: sbHeight,
-                stride: sbStride,
-                pixels: safeBuffer,
-              });
-              if (!surfaceBufferTimer) {
-                surfaceBufferTimer = setTimeout(flushSurfaceBuffers, 10);
-              }
+            surfaceBufferPending.set(windowName, {
+              name: windowName,
+              width: sbWidth,
+              height: sbHeight,
+              stride: sbStride,
+              pixels: safeBuffer,
+              damageRects: hasUsableRects ? damageRects : undefined,
+            });
+            if (!surfaceBufferTimer) {
+              surfaceBufferTimer = setTimeout(flushSurfaceBuffers, 10);
             }
           } catch (err) {
             const cached = shmFdCache.get(windowName);
