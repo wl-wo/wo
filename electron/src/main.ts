@@ -32,6 +32,18 @@ function debugLog(...args: any[]) {
 
 debugLog('[Wo] Electron starting, NODE_VERSION=', process.version);
 
+// GPU acceleration & rendering performance flags (must be set before app 'ready')
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('enable-features',
+  'CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder');
+app.commandLine.appendSwitch('use-gl', 'egl');
+app.commandLine.appendSwitch('enable-accelerated-video-decode');
+debugLog('[Wo] GPU acceleration flags applied');
+
 type ClientWindowInfo = {
   id: string;
   title: string;
@@ -1717,7 +1729,9 @@ async function createWindow() {
         contextIsolation: true,
         preload: preloadPath,
         nodeIntegration: false,
-        offscreen: !CLIENT_MODE
+        offscreen: !CLIENT_MODE,
+        webgl: true,
+        backgroundThrottling: false,
       },
       show: CLIENT_MODE,
     });
