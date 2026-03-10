@@ -403,6 +403,10 @@ fn main() -> Result<(), anyhow::Error> {
 
     let config = Config::load().context("loading config")?;
 
+    // Apply configured environment variables (e.g. DISPLAY=:0) so that all
+    // children inherit them.  XWayland will override DISPLAY later if needed.
+    config.apply_environment();
+
     // Determine backend priority: nested (gles) is prioritized with DRM fallback
     let force_drm = matches!(config.compositor.nested, Some(false));
 

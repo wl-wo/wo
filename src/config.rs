@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Context, Result};
 
@@ -89,6 +90,13 @@ pub struct CompositorConfig {
     /// Cursor size in pixels (default: 24)
     #[serde(default = "default_cursor_size")]
     pub cursor_size: u32,
+
+    /// Extra environment variables to set before spawning child processes.
+    /// Defaults include DISPLAY=":0" so X11 applications (e.g. Steam) can
+    /// fall back to a sensible value when XWayland hasn't started yet.
+    /// XWayland will override DISPLAY with the actual value once ready.
+    #[serde(default = "default_environment")]
+    pub environment: HashMap<String, String>,
 }
 
 impl Default for CompositorConfig {
@@ -110,6 +118,7 @@ impl Default for CompositorConfig {
             applications: vec![],
             cursor_theme: default_cursor_theme(),
             cursor_size: default_cursor_size(),
+            environment: default_environment(),
         }
     }
 }
@@ -278,6 +287,12 @@ fn default_true()        -> bool { true }
 fn default_cursor_theme() -> String { "breeze_cursors".into() }
 fn default_cursor_size() -> u32 { 24 }
 
+fn default_environment() -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert("DISPLAY".into(), ":0".into());
+    env
+}
+
 fn expand_path(s: &str) -> String {
     shellexpand::full(s)
         .map(|cow| cow.into_owned())
@@ -319,6 +334,21 @@ impl Config {
 
     pub fn config_dir() -> PathBuf {
         dirs_config()
+    }
+
+    /// Apply configured environment variables to the current process so all
+    /// subsequently-spawned children inherit them.  Existing env vars are
+    /// **not** overwritten so that, e.g., a DISPLAY already set by the
+    /// parent session or XWayland takes priority.
+    pub fn apply_environment(&self) {
+        for (key, value) in &self.compositor.environment {
+            if std::env::var(key).is_err() {
+                tracing::info!("Setting environment {key}={value} (from config default)");
+                std::env::set_var(key, value);
+            } else {
+                tracing::debug!("Environment {key} already set, skipping config default");
+            }
+        }
     }
 }
 

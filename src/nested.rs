@@ -85,6 +85,10 @@ pub fn run_nested(config: Config) -> Result<()> {
 
     info!("Starting nested compositor mode");
 
+    // Apply configured environment variables (e.g. DISPLAY=:0) early so that
+    // all children inherit them.  XWayland will override DISPLAY later.
+    config.apply_environment();
+
     if config.compositor.exit_on_escape {
         info!("Press ESC to exit");
     } else {

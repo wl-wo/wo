@@ -8,6 +8,12 @@ portal_socket = "$XDG_RUNTIME_DIR/wo-portal.sock"
 enable_syscalls = true
 focus_notify = true
 
+# Environment variables passed to all spawned child processes.
+# DISPLAY defaults to ":0" so X11 apps (e.g. Steam) work even before
+# XWayland is ready.  XWayland overrides DISPLAY with the actual value.
+[compositor.environment]
+DISPLAY = ":0"
+
 [[root]]
 name = "main"
 url = "http://localhost:5173"
