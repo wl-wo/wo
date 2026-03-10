@@ -1,0 +1,4 @@
+[portal]
+DBusName=org.freedesktop.impl.portal.desktop.wo
+Interfaces=org.freedesktop.impl.portal.ScreenCast;
+UseIn=wo;

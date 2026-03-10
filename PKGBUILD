@@ -68,6 +68,12 @@ package() {
   install -Dm644 packaging/wayland-sessions/wo.desktop \
     "$pkgdir/usr/share/wayland-sessions/wo.desktop"
 
+  install -Dm644 packaging/portals/wo.portal \
+    "$pkgdir/usr/share/xdg-desktop-portal/portals/wo.portal"
+
+  install -Dm644 packaging/dbus-services/org.freedesktop.impl.portal.desktop.wo.service \
+    "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.wo.service"
+
   install -Dm644 config.example.toml \
     "$pkgdir/usr/share/doc/$pkgname/config.example.toml"
 
