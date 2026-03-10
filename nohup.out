@@ -1,6 +1,0 @@
-Discord 0.0.128
-[7453:0309/220751.877593:ERROR:ui/ozone/platform/x11/ozone_platform_x11.cc:250] Missing X server or $DISPLAY
-[7453:0309/220751.877647:ERROR:ui/aura/env.cc:257] The platform failed to initialize.  Exiting.
-Discord 0.0.128
-[7931:0309/220902.615647:ERROR:ui/ozone/platform/x11/ozone_platform_x11.cc:250] Missing X server or $DISPLAY
-[7931:0309/220902.615700:ERROR:ui/aura/env.cc:257] The platform failed to initialize.  Exiting.
