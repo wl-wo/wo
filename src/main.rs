@@ -806,97 +806,94 @@ fn render_frame(data: &mut EventLoopData) {
                     }).collect()
                 });
 
-                // Prepare memfd pair for this window (ping-pong double buffer)
-                let pair = data.state.window_shm_buffers
-                    .entry(window_name.clone())
-                    .or_insert_with(|| {
-                        let a = nix::sys::memfd::memfd_create(
-                            std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
-                            MFdFlags::MFD_CLOEXEC,
-                        ).expect("creating memfd A");
-                        let b = nix::sys::memfd::memfd_create(
-                            std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
-                            MFdFlags::MFD_CLOEXEC,
-                        ).expect("creating memfd B");
-                        [a, b]
-                    });
-                let idx = data.state.window_shm_write_idx
-                    .entry(window_name.clone())
-                    .or_insert(0);
-                let memfd_fd = &pair[*idx];
-
-                // Try SHM buffer: write directly to memfd (no intermediate Vec)
-                let shm_meta: Option<(u32, u32, u32)> = with_states(surface, |states| {
+                // Try SHM buffer: write directly to mmap'd memfd with BGRA→RGBA conversion
+                let shm_meta: Option<(u32, u32, u32, i32)> = with_states(surface, |states| {
                     let rss_data = states.data_map.get::<RendererSurfaceStateUserData>()?;
                     let rss = rss_data.lock().ok()?;
                     let buffer = rss.buffer()?;
 
-                    let mut result: Option<(u32, u32, u32)> = None;
+                    let mut result: Option<(u32, u32, u32, i32)> = None;
                     let _ = with_buffer_contents(buffer, |ptr, len, spec| {
-                        let pixel_bytes =
-                            (spec.stride.max(0) * spec.height.max(0)) as usize;
+                        let src_stride = spec.stride.max(0) as usize;
+                        let bw = spec.width.max(0) as u32;
+                        let bh = spec.height.max(0) as u32;
+                        let pixel_bytes = src_stride * bh as usize;
                         if pixel_bytes == 0 || pixel_bytes > len { return; }
 
-                        let slice =
-                            unsafe { std::slice::from_raw_parts(ptr, pixel_bytes) };
+                        let dst_stride = (bw as usize) * 4;
+                        let dst_size = dst_stride * bh as usize;
 
-                        // Ensure memfd is correctly sized
-                        let size = pixel_bytes as i64;
-                        let cur_size = nix::sys::stat::fstat(memfd_fd)
-                            .map(|s| s.st_size).unwrap_or(0);
-                        if cur_size != size {
-                            let _ = nix::unistd::ftruncate(memfd_fd, size);
+                        let pair = data.state.window_shm_slots
+                            .entry(window_name.clone())
+                            .or_insert_with(|| {
+                                crate::state::ShmSlotPair::new(dst_size)
+                                    .expect("creating ShmSlotPair")
+                            });
+
+                        let slot = pair.write_slot_mut();
+                        if let Err(e) = slot.ensure_size(dst_size) {
+                            warn!("Failed to resize SHM slot for {}: {}", window_name, e);
+                            return;
                         }
 
-                        // Partial-damage write: when damage rects cover a small
-                        // area and the memfd was already the correct size (meaning
-                        // the previous full frame is still valid for undamaged
-                        // regions), write only the damaged rows.
-                        let usable_damage = !damage_rects.is_empty()
-                            && damage_rects.len() < 64
-                            && cur_size == size;
+                        let dst = unsafe { slot.as_mut_slice() };
+                        let src = unsafe { std::slice::from_raw_parts(ptr, pixel_bytes) };
 
-                        if usable_damage {
-                            let stride = spec.stride as usize;
-                            let height = spec.height as usize;
+                        let do_partial = !damage_rects.is_empty()
+                            && damage_rects.len() < 64;
+
+                        if do_partial {
                             for rect in &damage_rects {
-                                let y0 = (rect.y.max(0) as usize).min(height);
-                                let y1 = ((rect.y + rect.height).max(0) as usize).min(height);
-                                if y0 >= y1 { continue; }
-                                let byte_start = y0 * stride;
-                                let byte_end = y1 * stride;
-                                let _ = nix::unistd::lseek(
-                                    memfd_fd, byte_start as i64,
-                                    nix::unistd::Whence::SeekSet,
-                                );
-                                let _ = nix::unistd::write(memfd_fd, &slice[byte_start..byte_end]);
+                                let rx = (rect.x as usize).min(bw as usize);
+                                let ry = (rect.y as usize).min(bh as usize);
+                                let rw = (rect.width as usize).min(bw as usize - rx);
+                                let rh = (rect.height as usize).min(bh as usize - ry);
+                                for row in ry..ry + rh {
+                                    let src_row_off = row * src_stride + rx * 4;
+                                    let dst_row_off = row * dst_stride + rx * 4;
+                                    for col in 0..rw {
+                                        let si = src_row_off + col * 4;
+                                        let di = dst_row_off + col * 4;
+                                        dst[di]     = src[si + 2]; // R
+                                        dst[di + 1] = src[si + 1]; // G
+                                        dst[di + 2] = src[si];     // B
+                                        dst[di + 3] = src[si + 3]; // A
+                                    }
+                                }
                             }
                         } else {
-                            let _ = nix::unistd::lseek(memfd_fd, 0, nix::unistd::Whence::SeekSet);
-                            let _ = nix::unistd::write(memfd_fd, slice);
+                            for row in 0..bh as usize {
+                                let src_row_off = row * src_stride;
+                                let dst_row_off = row * dst_stride;
+                                for col in 0..bw as usize {
+                                    let si = src_row_off + col * 4;
+                                    let di = dst_row_off + col * 4;
+                                    dst[di]     = src[si + 2]; // R
+                                    dst[di + 1] = src[si + 1]; // G
+                                    dst[di + 2] = src[si];     // B
+                                    dst[di + 3] = src[si + 3]; // A
+                                }
+                            }
                         }
 
-                        result = Some((
-                            spec.width as u32,
-                            spec.height as u32,
-                            spec.stride as u32,
-                        ));
+                        // Get the fd of the slot we just wrote to (write_slot_mut already flipped)
+                        let wrote_idx = 1 - pair.current_write_idx();
+                        let memfd_raw = std::os::unix::io::AsRawFd::as_raw_fd(&pair.slots[wrote_idx].fd);
+                        result = Some((bw, bh, bw * 4, memfd_raw));
                     });
                     result
                 });
 
-                if let Some((bw, bh, stride)) = shm_meta {
+                if let Some((bw, bh, stride, memfd_raw)) = shm_meta {
                     if let Some(ref ipc) = data.state.electron_ipc {
                         if let Err(e) = ipc.broadcast_shm_buffer(
                             &window_name, bw, bh, stride,
-                            pid, memfd_fd.as_raw_fd() as i32,
+                            pid, memfd_raw,
                             &damage_rects,
                         ) {
                             debug!("DRM shm buffer broadcast failed for {}: {}", window_name, e);
                         }
                     }
-                    // Flip to the other buffer for next frame
-                    *idx = 1 - *idx;
                 } else if let Some(ref ipc) = data.state.electron_ipc {
                     // Try DMABUF (hardware-rendered clients / games)
                     let dmabuf_opt = with_states(surface, |states| {

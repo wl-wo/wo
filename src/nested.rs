@@ -746,13 +746,26 @@ pub fn run_nested(config: Config) -> Result<()> {
 
             drop(target);
 
-            // Export dirty Wayland surfaces via offscreen rendering to SHM
-            let mut exported_pixels: Vec<crate::state::ShmExport> = Vec::new();
+            // Export dirty Wayland surfaces directly to mmap'd memfds (zero intermediate copy).
+            // BGRA→RGBA conversion happens during the copy so the client can skip it.
             {
                 use smithay::reexports::wayland_server::Resource;
                 use smithay::wayland::compositor::{with_states, Damage, SurfaceAttributes};
+                use std::os::unix::io::AsRawFd;
 
                 let dirty: Vec<_> = state.dirty_surfaces.drain().collect();
+
+                // Collect exports into a Vec so we can send IPC after releasing surface borrows.
+                struct ShmExportMeta {
+                    window_name: String,
+                    width: u32,
+                    height: u32,
+                    /// Output stride (always width*4, tight packing in RGBA).
+                    stride: u32,
+                    memfd_raw_fd: i32,
+                    damage_rects: Vec<crate::state::DamageRect>,
+                }
+                let mut shm_exports: Vec<ShmExportMeta> = Vec::new();
 
                 for surface in dirty {
                     let surface_id = surface.id();
@@ -824,41 +837,132 @@ pub fn run_nested(config: Config) -> Result<()> {
                         continue;
                     }
 
-                    // Read SHM buffer directly (for software-rendered clients)
+                    // ── Direct SHM→mmap copy with BGRA→RGBA conversion ──────────
                     use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
                     use smithay::wayland::shm::with_buffer_contents;
 
-                    let pixels_opt: Option<(u32, u32, u32, Vec<u8>)> =
-                        with_states(&surface, |states| {
-                            let rss_data = states.data_map.get::<RendererSurfaceStateUserData>()?;
-                            let rss = rss_data.lock().ok()?;
-                            let buffer = rss.buffer()?;
+                    let wrote_ok: bool = with_states(&surface, |states| {
+                        let rss_data = match states.data_map.get::<RendererSurfaceStateUserData>() {
+                            Some(d) => d,
+                            None => return false,
+                        };
+                        let rss = match rss_data.lock() {
+                            Ok(r) => r,
+                            Err(_) => return false,
+                        };
+                        let buffer = match rss.buffer() {
+                            Some(b) => b,
+                            None => return false,
+                        };
 
-                            let mut result: Option<(u32, u32, u32, Vec<u8>)> = None;
-                            let _ = with_buffer_contents(buffer, |ptr, len, spec| {
-                                let pixel_bytes =
-                                    (spec.stride.max(0) * spec.height.max(0)) as usize;
-                                if pixel_bytes > 0 && pixel_bytes <= len {
-                                    let slice =
-                                        unsafe { std::slice::from_raw_parts(ptr, pixel_bytes) };
-                                    result = Some((
-                                        spec.width as u32,
-                                        spec.height as u32,
-                                        spec.stride as u32,
-                                        slice.to_vec(),
-                                    ));
+                        let mut ok = false;
+                        let _ = with_buffer_contents(buffer, |ptr, len, spec| {
+                            let src_stride = spec.stride.max(0) as usize;
+                            let bw = spec.width.max(0) as u32;
+                            let bh = spec.height.max(0) as u32;
+                            let pixel_bytes = src_stride * bh as usize;
+                            if pixel_bytes == 0 || pixel_bytes > len {
+                                return;
+                            }
+
+                            // Output stride: tightly packed RGBA (width * 4)
+                            let dst_stride = (bw as usize) * 4;
+                            let dst_size = dst_stride * bh as usize;
+
+                            // Get or create the mmap'd slot pair for this window.
+                            let pair = state
+                                .window_shm_slots
+                                .entry(window_name.clone())
+                                .or_insert_with(|| {
+                                    crate::state::ShmSlotPair::new(dst_size)
+                                        .expect("creating ShmSlotPair")
+                                });
+
+                            let slot = pair.write_slot_mut();
+                            if let Err(e) = slot.ensure_size(dst_size) {
+                                warn!("Failed to resize SHM slot for {}: {}", window_name, e);
+                                return;
+                            }
+
+                            // SAFETY: ping-pong guarantees Electron reads the other slot.
+                            let dst = unsafe { slot.as_mut_slice() };
+                            let src = unsafe { std::slice::from_raw_parts(ptr, pixel_bytes) };
+
+                            // Determine whether to do a partial (damage-rect) or full copy.
+                            let do_partial = !damage_rects.is_empty()
+                                && damage_rects.len() < 64;
+
+                            if do_partial {
+                                // Partial update: only copy damaged rows with BGRA→RGBA swap
+                                for rect in &damage_rects {
+                                    let rx = (rect.x as usize).min(bw as usize);
+                                    let ry = (rect.y as usize).min(bh as usize);
+                                    let rw = (rect.width as usize).min(bw as usize - rx);
+                                    let rh = (rect.height as usize).min(bh as usize - ry);
+                                    for row in ry..ry + rh {
+                                        let src_row_off = row * src_stride + rx * 4;
+                                        let dst_row_off = row * dst_stride + rx * 4;
+                                        for col in 0..rw {
+                                            let si = src_row_off + col * 4;
+                                            let di = dst_row_off + col * 4;
+                                            // BGRA → RGBA: swap B↔R
+                                            dst[di]     = src[si + 2]; // R
+                                            dst[di + 1] = src[si + 1]; // G
+                                            dst[di + 2] = src[si];     // B
+                                            dst[di + 3] = src[si + 3]; // A
+                                        }
+                                    }
                                 }
-                            });
-                            result
+                            } else {
+                                // Full frame: copy all rows with BGRA→RGBA swap
+                                for row in 0..bh as usize {
+                                    let src_row_off = row * src_stride;
+                                    let dst_row_off = row * dst_stride;
+                                    for col in 0..bw as usize {
+                                        let si = src_row_off + col * 4;
+                                        let di = dst_row_off + col * 4;
+                                        dst[di]     = src[si + 2]; // R
+                                        dst[di + 1] = src[si + 1]; // G
+                                        dst[di + 2] = src[si];     // B
+                                        dst[di + 3] = src[si + 3]; // A
+                                    }
+                                }
+                            }
+                            ok = true;
+                        });
+                        ok
+                    });
+
+                    if wrote_ok {
+                        // The slot pair was already flipped by write_slot_mut(); the
+                        // "previous" write slot is at index (current_write_idx) since
+                        // write_slot_mut already toggled it.
+                        let pair = state.window_shm_slots.get(&window_name).unwrap();
+                        // After write_slot_mut() the write_idx was flipped, so the
+                        // slot we just wrote to is at `1 - pair.write_idx`.
+                        let wrote_idx = 1 - pair.current_write_idx();
+                        let memfd_raw = pair.slots[wrote_idx].fd.as_raw_fd();
+
+                        let bw_h: (u32, u32) = with_states(&surface, |states| {
+                            let rss_data = states.data_map.get::<RendererSurfaceStateUserData>();
+                            rss_data
+                                .and_then(|d| d.lock().ok())
+                                .and_then(|rss| rss.buffer().map(|b| {
+                                    let mut r = (0u32, 0u32);
+                                    let _ = with_buffer_contents(&b, |_ptr, _len, spec| {
+                                        r = (spec.width.max(0) as u32, spec.height.max(0) as u32);
+                                    });
+                                    r
+                                }))
+                                .unwrap_or((w, h))
                         });
 
-                    if let Some((bw, bh, stride, pixels)) = pixels_opt {
-                        exported_pixels.push(crate::state::ShmExport {
+                        shm_exports.push(ShmExportMeta {
                             window_name,
-                            width: bw,
-                            height: bh,
-                            stride,
-                            pixels,
+                            width: bw_h.0,
+                            height: bw_h.1,
+                            stride: bw_h.0 * 4,
+                            memfd_raw_fd: memfd_raw,
                             damage_rects,
                         });
                     } else if let Some(ref ipc) = state.electron_ipc {
@@ -931,10 +1035,6 @@ pub fn run_nested(config: Config) -> Result<()> {
                                     )?;
                                     frame.clear(Color32F::TRANSPARENT, &[output_rect])?;
 
-                                    // Draw each element in the surface tree
-                                    // Elements are positioned relative to surface origin (0, 0)
-                                    // For CSD windows, we DON'T offset - surface origin should already
-                                    // include the decoration area, and geometry() positions are correct
                                     for element in &elements {
                                         let src = element.src();
                                         let dst = element.geometry(scale);
@@ -949,8 +1049,6 @@ pub fn run_nested(config: Config) -> Result<()> {
                                 continue;
                             }
 
-                            // Read back pixels from offscreen texture
-                            // Skip GL rendering for now - only export SHM buffers
                             warn!(
                                 "Skipping GL offscreen render for {} - only SHM buffers supported",
                                 window_name
@@ -960,8 +1058,27 @@ pub fn run_nested(config: Config) -> Result<()> {
                     }
                 }
 
-                // Store exported pixels for memfd write after render block
-                state.pending_shm_exports = exported_pixels;
+                // Broadcast SHM metadata to Electron (pixels already in mmap'd memfds).
+                if let Some(ref ipc) = state.electron_ipc {
+                    let pid = std::process::id();
+                    for meta in &shm_exports {
+                        if let Err(e) = ipc.broadcast_shm_buffer(
+                            &meta.window_name,
+                            meta.width,
+                            meta.height,
+                            meta.stride,
+                            pid,
+                            meta.memfd_raw_fd,
+                            &meta.damage_rects,
+                        ) {
+                            debug!(
+                                "nested shm buffer broadcast failed for {}: {}",
+                                meta.window_name, e
+                            );
+                        }
+                    }
+                }
+
                 state.dirty_surfaces.clear();
             } // 'render block ends here, backend borrow is released
 
@@ -999,66 +1116,7 @@ pub fn run_nested(config: Config) -> Result<()> {
                 });
             }
 
-            // Write exported pixel buffers to SHM and broadcast to Electron.
-            // Uses ping-pong double-buffered memfds (same as DRM path).
-            if did_bind {
-                use std::os::unix::io::AsRawFd;
-
-                let exports = std::mem::take(&mut state.pending_shm_exports);
-                for export in exports {
-                    let pair = state
-                        .window_shm_buffers
-                        .entry(export.window_name.clone())
-                        .or_insert_with(|| {
-                            let a = nix::sys::memfd::memfd_create(
-                                std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
-                                MFdFlags::MFD_CLOEXEC,
-                            )
-                            .expect("creating memfd A");
-                            let b = nix::sys::memfd::memfd_create(
-                                std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
-                                MFdFlags::MFD_CLOEXEC,
-                            )
-                            .expect("creating memfd B");
-                            [a, b]
-                        });
-
-                    let idx = state.window_shm_write_idx
-                        .entry(export.window_name.clone())
-                        .or_insert(0);
-                    let memfd_fd = &pair[*idx];
-
-                    let size = export.pixels.len() as i64;
-                    let stat = nix::sys::stat::fstat(memfd_fd).unwrap();
-                    if stat.st_size != size {
-                        nix::unistd::ftruncate(memfd_fd, size).expect("truncating memfd");
-                    }
-
-                    nix::unistd::lseek(memfd_fd, 0, nix::unistd::Whence::SeekSet)
-                        .expect("seeking memfd");
-                    nix::unistd::write(memfd_fd, &export.pixels).expect("writing to memfd");
-
-                    if let Some(ref ipc) = state.electron_ipc {
-                        let pid = std::process::id();
-                        if let Err(e) = ipc.broadcast_shm_buffer(
-                            &export.window_name,
-                            export.width,
-                            export.height,
-                            export.stride,
-                            pid,
-                            memfd_fd.as_raw_fd() as i32,
-                            &export.damage_rects,
-                        ) {
-                            debug!(
-                                "nested shm buffer broadcast failed for {}: {}",
-                                export.window_name, e
-                            );
-                        }
-                    }
-
-                    *idx = 1 - *idx;
-                }
-            }
+            // SHM exports already written directly to mmap'd memfds and broadcast above.
 
             let render_total_ms = render_t_start.elapsed().as_millis();
             if render_total_ms > 50 {

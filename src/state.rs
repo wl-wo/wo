@@ -45,14 +45,141 @@ pub struct DamageRect {
     pub height: i32,
 }
 
-/// Buffered SHM pixel export with per-surface damage information.
-pub struct ShmExport {
-    pub window_name: String,
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub pixels: Vec<u8>,
-    pub damage_rects: Vec<DamageRect>,
+/// mmap-backed memfd slot for zero-copy SHM export.
+///
+/// Instead of copying pixels into a `Vec` and later `write()`-ing to a memfd,
+/// we keep the memfd persistently mmap'd so the compositor can `memcpy`
+/// directly from the Wayland SHM pool into the mapped region — eliminating
+/// two copies per frame.  Electron reads the same memfd via
+/// `/proc/<pid>/fd/<fd>` without any additional data movement.
+pub struct MappedShmSlot {
+    pub fd: std::os::unix::io::OwnedFd,
+    ptr: *mut u8,
+    len: usize,
+}
+
+// SAFETY: The mmap pointer is only accessed on the compositor main thread.
+unsafe impl Send for MappedShmSlot {}
+
+impl MappedShmSlot {
+    /// Create a new slot backed by a memfd of `size` bytes.
+    pub fn new(size: usize) -> anyhow::Result<Self> {
+        use anyhow::Context;
+        let fd = nix::sys::memfd::memfd_create(
+            std::ffi::CStr::from_bytes_with_nul(b"wayland_window\0").unwrap(),
+            nix::sys::memfd::MFdFlags::MFD_CLOEXEC,
+        )
+        .context("creating memfd for MappedShmSlot")?;
+        nix::unistd::ftruncate(&fd, size as i64).context("ftruncate memfd")?;
+
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                std::os::unix::io::AsRawFd::as_raw_fd(&fd),
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            anyhow::bail!("mmap failed for MappedShmSlot");
+        }
+
+        Ok(Self { fd, ptr: ptr as *mut u8, len: size })
+    }
+
+    /// Resize the slot, remapping if the new size differs.
+    pub fn ensure_size(&mut self, new_size: usize) -> anyhow::Result<()> {
+        use anyhow::Context;
+        if new_size == self.len {
+            return Ok(());
+        }
+        // munmap old
+        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
+        nix::unistd::ftruncate(&self.fd, new_size as i64).context("ftruncate resize")?;
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                new_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                std::os::unix::io::AsRawFd::as_raw_fd(&self.fd),
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            anyhow::bail!("mmap failed on resize");
+        }
+        self.ptr = ptr as *mut u8;
+        self.len = new_size;
+        Ok(())
+    }
+
+    /// Get a mutable slice over the mapped region.
+    ///
+    /// # Safety
+    /// Caller must ensure no concurrent reader is accessing the slot
+    /// (the ping-pong scheme guarantees this).
+    #[inline]
+    pub unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
+        std::slice::from_raw_parts_mut(self.ptr, self.len)
+    }
+
+    /// Copy `src` into the mapped region starting at byte offset `offset`.
+    /// # Safety
+    /// Same as `as_mut_slice`.
+    #[inline]
+    pub unsafe fn write_at(&mut self, offset: usize, src: &[u8]) {
+        debug_assert!(offset + src.len() <= self.len);
+        std::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr.add(offset), src.len());
+    }
+
+    /// Write a single pixel (4 bytes) at the given byte offset.
+    #[inline]
+    pub unsafe fn write_pixel(&mut self, offset: usize, pixel: [u8; 4]) {
+        debug_assert!(offset + 4 <= self.len);
+        std::ptr::copy_nonoverlapping(pixel.as_ptr(), self.ptr.add(offset), 4);
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl Drop for MappedShmSlot {
+    fn drop(&mut self) {
+        if self.len > 0 {
+            unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
+        }
+    }
+}
+
+/// Ping-pong pair of mmap'd memfd slots for a window.
+pub struct ShmSlotPair {
+    pub slots: [MappedShmSlot; 2],
+    pub write_idx: usize,
+}
+
+impl ShmSlotPair {
+    pub fn new(size: usize) -> anyhow::Result<Self> {
+        Ok(Self {
+            slots: [MappedShmSlot::new(size)?, MappedShmSlot::new(size)?],
+            write_idx: 0,
+        })
+    }
+
+    /// Get the current write slot (mutably) and flip the index for next frame.
+    pub fn write_slot_mut(&mut self) -> &mut MappedShmSlot {
+        let idx = self.write_idx;
+        self.write_idx = 1 - self.write_idx;
+        &mut self.slots[idx]
+    }
+
+    /// Peek the current write slot index (before flip).
+    pub fn current_write_idx(&self) -> usize {
+        self.write_idx
+    }
 }
 
 #[derive(Default)]
@@ -126,13 +253,8 @@ pub struct WoState {
     pub metadata_dirty: bool,
     /// Wayland surfaces that committed a new buffer and need offscreen capture.
     pub dirty_surfaces: std::collections::HashSet<WlSurface>,
-    /// Ping-pong SHM memfd pairs per window.  Index 0 is being written by
-    /// the compositor while Electron reads index 1 (and vice versa).
-    pub window_shm_buffers: std::collections::HashMap<String, [std::os::unix::io::OwnedFd; 2]>,
-    /// Tracks which of the two memfds is the current write target (0 or 1).
-    pub window_shm_write_idx: std::collections::HashMap<String, usize>,
-    /// Buffered pixel exports from offscreen rendering, written to SHM after render block.
-    pub pending_shm_exports: Vec<ShmExport>,
+    /// Ping-pong mmap'd memfd pairs per window for zero-copy SHM export.
+    pub window_shm_slots: std::collections::HashMap<String, ShmSlotPair>,
     pub grab_state: Option<crate::handlers::xdg_shell::GrabState>,
     pub cursor_theme_manager: CursorThemeManager,
 
@@ -328,9 +450,7 @@ impl WoState {
             damaged_windows: std::collections::HashSet::new(),
             metadata_dirty: true,
             dirty_surfaces: std::collections::HashSet::new(),
-            window_shm_buffers: std::collections::HashMap::new(),
-            window_shm_write_idx: std::collections::HashMap::new(),
-            pending_shm_exports: Vec::new(),
+            window_shm_slots: std::collections::HashMap::new(),
             grab_state: None,
             cursor_theme_manager,
             debug_new_toplevel: false,
