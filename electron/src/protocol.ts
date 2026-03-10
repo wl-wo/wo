@@ -31,6 +31,7 @@ export const MAGIC = {
   FORWARD_RELATIVE_POINTER: 0x574F5245, // "WORE" — forwarded relative pointer (dx/dy)
   POINTER_LOCK_REQUEST: 0x574F504C, // "WOPL" — server-to-client pointer lock request
   ENV_UPDATE: 0x574F4555,           // "WOEU" — environment variable update broadcast
+  SCREENCOPY_EVENT: 0x574F5345,     // "WOSE" — screencopy capture event notification
 } as const;
 
 /**
@@ -96,6 +97,12 @@ export interface EnvUpdateEvent {
   vars: Record<string, string>;
 }
 
+export interface ScreencopyEvent {
+  type: 'screencopyEvent';
+  active: boolean;
+  clientCount: number;
+}
+
 export type InputEvent =
   | MouseMoveEvent
   | MouseButtonEvent
@@ -104,7 +111,8 @@ export type InputEvent =
   | FocusChangeEvent
   | WindowMetadataEvent
   | PointerLockRequestEvent
-  | EnvUpdateEvent;
+  | EnvUpdateEvent
+  | ScreencopyEvent;
 
 /**
  * Compositor Actions from Client → Compositor

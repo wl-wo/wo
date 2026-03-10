@@ -31,6 +31,7 @@ use crate::{
     cursor::CursorThemeManager,
     dmabuf::TextureCache,
     electron::{ElectronIpc, ElectronProcess},
+    handlers::screencopy::ScreencopyManagerState,
     syscall::SyscallHandler,
 };
 use portal::WoPortal;
@@ -244,6 +245,8 @@ pub struct WoState {
     pub electron_ipc: Option<ElectronIpc>,
     pub syscall_handler: Option<SyscallHandler>,
     pub portal: Option<std::sync::Arc<WoPortal>>,
+    /// wlr-screencopy protocol state for frame capture requests.
+    pub screencopy_state: Option<ScreencopyManagerState>,
     /// Mapping state for named Electron windows. If false, the window should
     /// not be rendered (unmapped/minimized).
     pub window_mapped: std::collections::HashMap<String, bool>,
@@ -343,6 +346,9 @@ impl WoState {
             None
         };
 
+        // Initialize wlr-screencopy protocol
+        let screencopy_state = Some(ScreencopyManagerState::new::<Self>(&dh));
+
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let dmabuf_state = DmabufState::new();
 
@@ -439,6 +445,7 @@ impl WoState {
             electron_ipc: None,
             syscall_handler,
             portal,
+            screencopy_state,
             xwayland: None,
             xwm: None,
             xwayland_shell_state: None,

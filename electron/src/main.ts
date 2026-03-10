@@ -1219,6 +1219,19 @@ function connectToCompositor(): Promise<void> {
           continue;
         }
 
+        if (magic === MAGIC.SCREENCOPY_EVENT) {
+          // magic(4) + active(4) + client_count(4) = 12 bytes
+          if (compositorRxBuffer.length < 12) break;
+          const active = compositorRxBuffer.readUInt32LE(4) !== 0;
+          const clientCount = compositorRxBuffer.readUInt32LE(8);
+          compositorRxBuffer = compositorRxBuffer.slice(12);
+
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('wo:screencopy-event', { active, clientCount });
+          }
+          continue;
+        }
+
         // Unknown message magic; resync by advancing one byte.
         debugLog('[Wo] UNKNOWN magic 0x' + magic.toString(16).padStart(8, '0') + ' bufLen=' + compositorRxBuffer.length + ' — stream may be corrupted');
         compositorRxBuffer = compositorRxBuffer.slice(1);

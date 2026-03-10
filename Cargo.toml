@@ -30,6 +30,7 @@ gl = "0.14"
 # Wayland
 wayland-server = "0.31"
 wayland-protocols = { version = "0.32", features = ["server", "staging", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 wayland-backend = { version = "0.3", features = ["server_system"] }
 
 # Async / IPC

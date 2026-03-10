@@ -115,6 +115,14 @@ const compositorAPI: CompositorAPI = {
     ipcRenderer.on('wo:portal-request', handler);
     return () => ipcRenderer.removeListener('wo:portal-request', handler);
   },
+
+  // Screencopy capture event notifications
+  onScreencopyEvent: (callback: (data: { active: boolean; clientCount: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { active: boolean; clientCount: number }) =>
+      callback(data);
+    ipcRenderer.on('wo:screencopy-event', handler);
+    return () => ipcRenderer.removeListener('wo:screencopy-event', handler);
+  },
 };
 
 const woClientAPI: WoClientAPI = {

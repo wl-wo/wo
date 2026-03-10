@@ -21,6 +21,8 @@ export type {
   DamagePatch,
   RendererDamageHelper,
   RendererDamageHelperOptions,
+  PortalRequestEvent,
+  ScreencopyEvent,
 } from './types';
 
 export { InteractionDispatcher } from './dispatcher';

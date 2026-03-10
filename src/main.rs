@@ -54,6 +54,7 @@ use std::{
 };
 use tracing::{error, info, trace, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1;
 
 pub mod state;
 pub mod syscall;
@@ -944,6 +945,150 @@ fn render_frame(data: &mut EventLoopData) {
         // only queues commands; glFinish blocks until they're done.
         renderer.with_context(|gl| unsafe { gl.Finish() })
             .unwrap_or_else(|e| warn!("glFinish failed: {e}"));
+
+        // ── Fulfill pending wlr-screencopy frame requests ───────────────
+        // After glFinish the framebuffer pixels are ready. Read them back
+        // and copy into each waiting client's SHM buffer.
+        if let Some(ref screencopy) = data.state.screencopy_state {
+            let pending = screencopy.take_pending_frames();
+            if !pending.is_empty() {
+                // Read back the full framebuffer via glReadPixels
+                let (fb_w, fb_h) = (data.width as i32, data.height as i32);
+                let fb_size = (fb_w as usize) * (fb_h as usize) * 4;
+                let mut fb_pixels = vec![0u8; fb_size];
+                let read_ok = renderer.with_context(|gl| unsafe {
+                    gl.ReadPixels(
+                        0, 0, fb_w, fb_h,
+                        gl::RGBA,
+                        gl::UNSIGNED_BYTE,
+                        fb_pixels.as_mut_ptr() as *mut _,
+                    );
+                });
+
+                if read_ok.is_ok() {
+                    // GL returns bottom-up rows; flip to top-down.
+                    let stride = fb_w as usize * 4;
+                    for y in 0..(fb_h as usize / 2) {
+                        let top = y * stride;
+                        let bot = (fb_h as usize - 1 - y) * stride;
+                        for x in 0..stride {
+                            fb_pixels.swap(top + x, bot + x);
+                        }
+                    }
+
+                    // Convert RGBA→ARGB (wl_shm expects ARGB8888)
+                    for pixel in fb_pixels.chunks_exact_mut(4) {
+                        let (r, g, b, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
+                        pixel[0] = b;
+                        pixel[1] = g;
+                        pixel[2] = r;
+                        pixel[3] = a;
+                    }
+
+                    use smithay::wayland::shm::with_buffer_contents_mut;
+                    use std::time::SystemTime;
+
+                    let now = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default();
+                    let tv_sec = now.as_secs();
+                    let tv_nsec = now.subsec_nanos();
+
+                    for pf in pending {
+                        let (rx, ry, rw, rh) = pf.region;
+
+                        // Copy the requested region into the client's SHM buffer
+                        let copy_ok = with_buffer_contents_mut(&pf.buffer, |dst_ptr, dst_len, buffer_data| {
+                            let dst = unsafe { std::slice::from_raw_parts_mut(dst_ptr, dst_len) };
+                            let dst_stride = buffer_data.stride as usize;
+                            let src_stride = fb_w as usize * 4;
+
+                            for row in 0..rh as usize {
+                                let src_y = ry as usize + row;
+                                if src_y >= fb_h as usize { break; }
+                                let src_off = src_y * src_stride + (rx as usize) * 4;
+                                let dst_off = row * dst_stride;
+                                let copy_len = (rw as usize * 4).min(dst_stride).min(src_stride - (rx as usize) * 4);
+                                if src_off + copy_len <= fb_pixels.len() && dst_off + copy_len <= dst.len() {
+                                    dst[dst_off..dst_off + copy_len]
+                                        .copy_from_slice(&fb_pixels[src_off..src_off + copy_len]);
+                                }
+                            }
+                        });
+
+                        if copy_ok.is_ok() {
+                            if pf.with_damage {
+                                pf.frame.damage(
+                                    0, 0,
+                                    rw as u32, rh as u32,
+                                );
+                            }
+                            pf.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
+                            pf.frame.ready(
+                                (tv_sec >> 32) as u32,
+                                tv_sec as u32,
+                                tv_nsec,
+                            );
+                        } else {
+                            pf.frame.failed();
+                        }
+                    }
+
+                    // Push pixels to portal PipeWire streams for screen sharing
+                    if let Some(ref portal) = data.state.portal {
+                        portal.push_pixels_to_streams(None, &fb_pixels);
+                    }
+                } else {
+                    for pf in pending {
+                        pf.frame.failed();
+                    }
+                }
+            }
+        } else if let Some(ref portal) = data.state.portal {
+            // No screencopy requests, but portal streams may be active.
+            // Only do the expensive readback if there are active portal streams.
+            if !portal.get_active_sessions().is_empty() {
+                let (fb_w, fb_h) = (data.width as i32, data.height as i32);
+                let fb_size = (fb_w as usize) * (fb_h as usize) * 4;
+                let mut fb_pixels = vec![0u8; fb_size];
+                let read_ok = renderer.with_context(|gl| unsafe {
+                    gl.ReadPixels(
+                        0, 0, fb_w, fb_h,
+                        gl::RGBA,
+                        gl::UNSIGNED_BYTE,
+                        fb_pixels.as_mut_ptr() as *mut _,
+                    );
+                });
+                if read_ok.is_ok() {
+                    let stride = fb_w as usize * 4;
+                    for y in 0..(fb_h as usize / 2) {
+                        let top = y * stride;
+                        let bot = (fb_h as usize - 1 - y) * stride;
+                        for x in 0..stride {
+                            fb_pixels.swap(top + x, bot + x);
+                        }
+                    }
+                    for pixel in fb_pixels.chunks_exact_mut(4) {
+                        let (r, g, b, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
+                        pixel[0] = b;
+                        pixel[1] = g;
+                        pixel[2] = r;
+                        pixel[3] = a;
+                    }
+                    portal.push_pixels_to_streams(None, &fb_pixels);
+                }
+            }
+        }
+
+        // Notify Electron/JS when screencopy captures are active
+        if let Some(ref screencopy) = data.state.screencopy_state {
+            let has_pending = screencopy.has_pending_frames();
+            if has_pending {
+                if let Some(ref ipc) = data.state.electron_ipc {
+                    let _ = ipc.broadcast_screencopy_event(true, 1);
+                }
+            }
+        }
 
         // Unbind the render target so the BO is no longer GL-locked.
         drop(target);

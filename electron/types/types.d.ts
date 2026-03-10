@@ -110,6 +110,11 @@ export interface PortalRequestEvent {
   sessionId?: string;
 }
 
+export interface ScreencopyEvent {
+  active: boolean;
+  clientCount: number;
+}
+
 /**
  * Application information for launching
  */
@@ -288,6 +293,12 @@ export interface Compositor {
    * Subscribe to generic portal requests so clients can provide custom UI.
    */
   onPortalRequest(callback: (data: PortalRequestEvent) => void): Unsubscribe;
+
+  /**
+   * Subscribe to screencopy capture events (active/inactive notifications).
+   * Fires when Wayland clients (e.g. OBS, grim) capture the screen via wlr-screencopy.
+   */
+  onScreencopyEvent(callback: (data: ScreencopyEvent) => void): Unsubscribe;
 }
 
 /** Alias for Compositor to match preload.ts imports */

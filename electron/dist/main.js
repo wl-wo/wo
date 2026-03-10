@@ -46,7 +46,8 @@ var MAGIC = {
   FORWARD_KEYBOARD: 1464814405,
   FORWARD_RELATIVE_POINTER: 1464816197,
   POINTER_LOCK_REQUEST: 1464815692,
-  ENV_UPDATE: 1464812885
+  ENV_UPDATE: 1464812885,
+  SCREENCOPY_EVENT: 1464816453
 };
 function stringToBuffer(str) {
   return Buffer.from(str, "utf-8");
@@ -1316,6 +1317,17 @@ function connectToCompositor() {
             }
           } catch (err) {
             debugLog("[Wo] ENV_UPDATE parse error:", err);
+          }
+          continue;
+        }
+        if (magic === MAGIC.SCREENCOPY_EVENT) {
+          if (compositorRxBuffer.length < 12)
+            break;
+          const active = compositorRxBuffer.readUInt32LE(4) !== 0;
+          const clientCount = compositorRxBuffer.readUInt32LE(8);
+          compositorRxBuffer = compositorRxBuffer.slice(12);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("wo:screencopy-event", { active, clientCount });
           }
           continue;
         }

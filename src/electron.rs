@@ -49,6 +49,7 @@ pub const MAGIC_FORWARD_POINTER_BUTTON: u32 = 0x574F5042; // "WOPB"
 pub const MAGIC_FORWARD_POINTER_SCROLL: u32 = 0x574F5053; // "WOPS"
 pub const MAGIC_POINTER_LOCK_REQUEST: u32 = 0x574F504C; // "WOPL" — server-to-client pointer lock request
 pub const MAGIC_ENV_UPDATE: u32 = 0x574F4555; // "WOEU" — environment variable update broadcast
+pub const MAGIC_SCREENCOPY_EVENT: u32 = 0x574F5345; // "WOSE" — screencopy capture event notification
 
 
 #[repr(C, packed)]
@@ -146,6 +147,8 @@ pub enum ElectronInputEvent {
     PointerLockRequest { window_name: String, lock: bool },
     /// Environment variable update (e.g. DISPLAY after XWayland is ready).
     EnvUpdate { vars: String },
+    /// Screencopy capture event (active/inactive notification).
+    ScreencopyEvent { active: bool, client_count: u32 },
 }
 
 /// A bidirectional connection to an Electron client.
@@ -464,6 +467,13 @@ impl ElectronClientConnection {
                 buf[8..].copy_from_slice(var_bytes);
                 self.write_bytes(&buf)?;
             },
+            ElectronInputEvent::ScreencopyEvent { active, client_count } => {
+                let mut buf = [0u8; 12];
+                buf[0..4].copy_from_slice(&MAGIC_SCREENCOPY_EVENT.to_le_bytes());
+                buf[4..8].copy_from_slice(&(*active as u32).to_le_bytes());
+                buf[8..12].copy_from_slice(&client_count.to_le_bytes());
+                self.write_bytes(&buf)?;
+            },
         }
         Ok(())
     }
@@ -537,6 +547,13 @@ impl ElectronClientConnection {
                 buf[0..4].copy_from_slice(&MAGIC_ENV_UPDATE.to_le_bytes());
                 buf[4..8].copy_from_slice(&(var_bytes.len() as u32).to_le_bytes());
                 buf[8..].copy_from_slice(var_bytes);
+                self.write_bytes_nonblocking(&buf)
+            }
+            ElectronInputEvent::ScreencopyEvent { active, client_count } => {
+                let mut buf = [0u8; 12];
+                buf[0..4].copy_from_slice(&MAGIC_SCREENCOPY_EVENT.to_le_bytes());
+                buf[4..8].copy_from_slice(&(*active as u32).to_le_bytes());
+                buf[8..12].copy_from_slice(&client_count.to_le_bytes());
                 self.write_bytes_nonblocking(&buf)
             }
         }
@@ -720,6 +737,24 @@ impl ElectronIpc {
         for client in &snapshot {
             if let Err(e) = client.try_send_input_event(&event) {
                 warn!("env update broadcast to '{}' failed: {e:#}", client.name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Broadcast screencopy capture event to all connected Electron clients.
+    pub fn broadcast_screencopy_event(&self, active: bool, client_count: u32) -> Result<()> {
+        let snapshot: Vec<_> = {
+            let clients = self.clients.lock().unwrap();
+            clients.values().cloned().collect()
+        };
+        let event = ElectronInputEvent::ScreencopyEvent {
+            active,
+            client_count,
+        };
+        for client in &snapshot {
+            if let Err(e) = client.try_send_input_event(&event) {
+                warn!("screencopy event broadcast to '{}' failed: {e:#}", client.name);
             }
         }
         Ok(())
