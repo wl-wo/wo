@@ -144,6 +144,51 @@ static std::map<uint32_t, BufEntry> g_bufs;
 static std::mutex g_bufs_mutex;
 static uint32_t g_next_token = 1;
 
+// ── GBM BO pool ──────────────────────────────────────────────────────
+// Reuse GBM BOs of the same (width, height) to avoid alloc/dealloc
+// overhead on every frame.  The pool keeps up to two idle BOs per
+// dimension so the sender can fill the next frame while the previous
+// one is still in flight (double-buffering).
+struct PoolKey {
+  uint32_t w, h;
+  bool operator<(const PoolKey &o) const {
+    return w < o.w || (w == o.w && h < o.h);
+  }
+};
+
+struct PoolEntry {
+  gbm_bo *bo;
+  uint32_t dst_stride;
+};
+
+static constexpr size_t MAX_POOL_PER_DIM = 2;
+static std::map<PoolKey, std::vector<PoolEntry>> g_bo_pool;
+static std::mutex g_bo_pool_mutex;
+
+static gbm_bo *pool_acquire(uint32_t w, uint32_t h, uint32_t *out_stride) {
+  std::lock_guard<std::mutex> lk(g_bo_pool_mutex);
+  auto it = g_bo_pool.find({w, h});
+  if (it != g_bo_pool.end() && !it->second.empty()) {
+    PoolEntry pe = it->second.back();
+    it->second.pop_back();
+    *out_stride = pe.dst_stride;
+    return pe.bo;
+  }
+  return nullptr;
+}
+
+static void pool_return(gbm_bo *bo, uint32_t w, uint32_t h, uint32_t stride) {
+  std::lock_guard<std::mutex> lk(g_bo_pool_mutex);
+  PoolKey key{w, h};
+  auto &vec = g_bo_pool[key];
+  if (vec.size() >= MAX_POOL_PER_DIM) {
+    // Pool full — destroy the returned BO
+    gbm_bo_destroy(bo);
+  } else {
+    vec.push_back({bo, stride});
+  }
+}
+
 static uint32_t store_buf(gbm_bo *bo, int fd) {
   std::lock_guard<std::mutex> lk(g_bufs_mutex);
   uint32_t tok = g_next_token++;
@@ -157,8 +202,13 @@ static void release_buf(uint32_t tok) {
   if (it == g_bufs.end())
     return;
   ::close(it->second.dmabuf_fd);
-  gbm_bo_destroy(it->second.bo);
+  gbm_bo *bo = it->second.bo;
+  uint32_t w = gbm_bo_get_width(bo);
+  uint32_t h = gbm_bo_get_height(bo);
+  uint32_t stride = gbm_bo_get_stride(bo);
   g_bufs.erase(it);
+  // Return to pool for reuse instead of destroying
+  pool_return(bo, w, h, stride);
 }
 
 Napi::Value Init(const Napi::CallbackInfo &info) {
@@ -195,44 +245,51 @@ Napi::Value ImportRgba(const Napi::CallbackInfo &info) {
     return env.Null();
   }
 
-  gbm_bo *bo = nullptr;
-
-  bo = gbm_bo_create_with_modifiers2(g_gbm, w, h, GBM_FORMAT_ARGB8888,
-                                     (const uint64_t[]){DRM_FORMAT_MOD_LINEAR},
-                                     1,
-                                     GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR);
+  // Try to reuse a pooled BO of matching dimensions
+  uint32_t dst_stride = 0;
+  gbm_bo *bo = pool_acquire(w, h, &dst_stride);
 
   if (!bo) {
-    bo = gbm_bo_create(g_gbm, w, h, GBM_FORMAT_ARGB8888,
-                       GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR);
-  }
-
-  if (!bo) {
-    bo = gbm_bo_create(g_gbm, w, h, GBM_FORMAT_ARGB8888, GBM_BO_USE_WRITE);
-  }
-
-  if (!bo) {
-    Napi::Error::New(
-        env, "gbm_bo_create failed: all buffer creation methods exhausted")
-        .ThrowAsJavaScriptException();
-    return env.Null();
+    bo = gbm_bo_create_with_modifiers2(g_gbm, w, h, GBM_FORMAT_ARGB8888,
+                                       (const uint64_t[]){DRM_FORMAT_MOD_LINEAR},
+                                       1,
+                                       GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR);
+    if (!bo) {
+      bo = gbm_bo_create(g_gbm, w, h, GBM_FORMAT_ARGB8888,
+                         GBM_BO_USE_RENDERING | GBM_BO_USE_LINEAR);
+    }
+    if (!bo) {
+      bo = gbm_bo_create(g_gbm, w, h, GBM_FORMAT_ARGB8888, GBM_BO_USE_WRITE);
+    }
+    if (!bo) {
+      Napi::Error::New(
+          env, "gbm_bo_create failed: all buffer creation methods exhausted")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
   }
 
   void *map_data = nullptr;
-  uint32_t dst_stride = 0;
+  uint32_t map_stride = 0;
   void *ptr =
-      gbm_bo_map(bo, 0, 0, w, h, GBM_BO_TRANSFER_WRITE, &dst_stride, &map_data);
+      gbm_bo_map(bo, 0, 0, w, h, GBM_BO_TRANSFER_WRITE, &map_stride, &map_data);
   if (!ptr) {
     gbm_bo_destroy(bo);
     Napi::Error::New(env, "gbm_bo_map failed").ThrowAsJavaScriptException();
     return env.Null();
   }
+  dst_stride = map_stride;
 
   const uint8_t *src = pixel_buf.Data();
   uint8_t *dst = static_cast<uint8_t *>(ptr);
-  uint32_t row_bytes = std::min(src_stride, dst_stride);
-  for (uint32_t y = 0; y < h; ++y)
-    std::memcpy(dst + y * dst_stride, src + y * src_stride, row_bytes);
+  if (src_stride == dst_stride) {
+    // Fast path: strides match — single memcpy for entire image
+    std::memcpy(dst, src, static_cast<size_t>(dst_stride) * h);
+  } else {
+    uint32_t row_bytes = std::min(src_stride, dst_stride);
+    for (uint32_t y = 0; y < h; ++y)
+      std::memcpy(dst + y * dst_stride, src + y * src_stride, row_bytes);
+  }
 
   gbm_bo_unmap(bo, map_data);
 
@@ -508,6 +565,118 @@ Napi::Value MmapFd(const Napi::CallbackInfo &info) {
       hint);
 }
 
+// ── Persistent mmap cache ─────────────────────────────────────────────
+// CopyMmapToSab and CopyMmapDamageToSab are called on every frame for
+// the same fd+size.  Avoid the mmap/munmap syscall pair per frame by
+// caching the mapping.  Evict when fd or size changes.
+struct MmapCacheEntry {
+  int fd;
+  void *ptr;
+  size_t size;
+};
+static MmapCacheEntry g_mmap_cache{-1, MAP_FAILED, 0};
+static std::mutex g_mmap_cache_mutex;
+
+static void *mmap_cached(int fd, size_t size) {
+  std::lock_guard<std::mutex> lk(g_mmap_cache_mutex);
+  if (g_mmap_cache.fd == fd && g_mmap_cache.size == size &&
+      g_mmap_cache.ptr != MAP_FAILED) {
+    return g_mmap_cache.ptr;
+  }
+  // Evict old mapping
+  if (g_mmap_cache.ptr != MAP_FAILED) {
+    ::munmap(g_mmap_cache.ptr, g_mmap_cache.size);
+  }
+  void *ptr = ::mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
+  g_mmap_cache = {fd, ptr, size};
+  return ptr;
+}
+
+// mmap a file descriptor into a region and copy into the backing store of a
+// pre-existing SharedArrayBuffer.  This is the fast path for SHM surface
+// buffers:  the compositor writes to a memfd, we mmap+memcpy into a SAB
+// that is already shared with the Electron renderer — no structured-clone
+// serialization across the Electron IPC boundary.
+//
+// copyMmapToSab(fd, sab, size, srcOffset?, dstOffset?)
+// If damage rects are provided, only the specified rows are copied.
+Napi::Value CopyMmapToSab(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 3) {
+    Napi::TypeError::New(env, "copyMmapToSab(fd, sab, size [, srcOff, dstOff])")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  int fd = info[0].As<Napi::Number>().Int32Value();
+  auto arrayBuf = info[1].As<Napi::ArrayBuffer>();
+  size_t size = static_cast<size_t>(info[2].As<Napi::Number>().Int64Value());
+  size_t src_off = (info.Length() > 3 && info[3].IsNumber())
+                       ? static_cast<size_t>(info[3].As<Napi::Number>().Int64Value())
+                       : 0;
+  size_t dst_off = (info.Length() > 4 && info[4].IsNumber())
+                       ? static_cast<size_t>(info[4].As<Napi::Number>().Int64Value())
+                       : 0;
+
+  if (dst_off + size > arrayBuf.ByteLength()) {
+    Napi::RangeError::New(env, "copyMmapToSab: destination overflow")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  void *ptr = mmap_cached(fd, src_off + size);
+  if (ptr == MAP_FAILED) {
+    Napi::Error::New(env, std::string("mmap failed: ") + ::strerror(errno))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  std::memcpy(static_cast<uint8_t *>(arrayBuf.Data()) + dst_off,
+              static_cast<const uint8_t *>(ptr) + src_off, size);
+
+  return env.Undefined();
+}
+
+// Partial-damage variant: copy only specified row ranges from mmap'd fd
+// into a SharedArrayBuffer.
+// copyMmapDamageToSab(fd, sab, stride, rects: [{y, h}])
+Napi::Value CopyMmapDamageToSab(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 4) {
+    Napi::TypeError::New(env, "copyMmapDamageToSab(fd, sab, stride, rects)")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  int fd = info[0].As<Napi::Number>().Int32Value();
+  auto arrayBuf = info[1].As<Napi::ArrayBuffer>();
+  uint32_t stride = info[2].As<Napi::Number>().Uint32Value();
+  auto rects = info[3].As<Napi::Array>();
+
+  size_t totalSize = arrayBuf.ByteLength();
+  void *ptr = mmap_cached(fd, totalSize);
+  if (ptr == MAP_FAILED) {
+    Napi::Error::New(env, std::string("mmap failed: ") + ::strerror(errno))
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint8_t *src = static_cast<uint8_t *>(ptr);
+  uint8_t *dst = static_cast<uint8_t *>(arrayBuf.Data());
+
+  for (uint32_t i = 0; i < rects.Length(); i++) {
+    auto rect = rects.Get(i).As<Napi::Object>();
+    uint32_t ry = rect.Get("y").As<Napi::Number>().Uint32Value();
+    uint32_t rh = rect.Get("h").As<Napi::Number>().Uint32Value();
+    size_t off = static_cast<size_t>(ry) * stride;
+    size_t len = static_cast<size_t>(rh) * stride;
+    if (off + len > totalSize) len = totalSize - off;
+    std::memcpy(dst + off, src + off, len);
+  }
+
+  return env.Undefined();
+}
+
 Napi::Object ModuleInit(Napi::Env env, Napi::Object exports) {
   exports.Set("init", Napi::Function::New(env, Init));
   exports.Set("importRgba", Napi::Function::New(env, ImportRgba));
@@ -515,6 +684,8 @@ Napi::Object ModuleInit(Napi::Env env, Napi::Object exports) {
   exports.Set("sendFd", Napi::Function::New(env, SendFd));
   exports.Set("recvFd", Napi::Function::New(env, RecvFd));
   exports.Set("mmapFd", Napi::Function::New(env, MmapFd));
+  exports.Set("copyMmapToSab", Napi::Function::New(env, CopyMmapToSab));
+  exports.Set("copyMmapDamageToSab", Napi::Function::New(env, CopyMmapDamageToSab));
   exports.Set("importDmabufTexture", Napi::Function::New(env, ImportDmabufTexture));
   exports.Set("getTexture", Napi::Function::New(env, GetTexture));
   exports.Set("releaseTexture", Napi::Function::New(env, ReleaseTexture));

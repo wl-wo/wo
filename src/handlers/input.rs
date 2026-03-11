@@ -436,7 +436,7 @@ impl WoState {
                     let pos: Point<f64, Logical> = self.pointer_location;
                     let under_surface = self.space.element_under(pos);
 
-                    if let Some((window, surface_loc)) = under_surface {
+                    if let Some((window, _surface_loc)) = under_surface {
                         let surface_opt = if let Some(x11) = window.x11_surface() {
                             x11.wl_surface()
                         } else {

@@ -255,6 +255,7 @@ impl XwmHandler for WoState {
         let (ow, oh) = (self.output_size.0 as i32, self.output_size.1 as i32);
         let content_h = (oh - y_offset).max(1);
 
+        #[allow(deprecated)]
         if let Err(e) = window.configure(Some(Rectangle::from_loc_and_size((0, y_offset), (ow, content_h)))) {
             warn!("XWayland: fullscreen configure failed: {e}");
         }
@@ -300,6 +301,7 @@ impl XwmHandler for WoState {
         let suggest_w = (ow * 2 / 3).max(640).min(1600);
         let suggest_h = (oh * 2 / 3).max(480).min(1000);
 
+        #[allow(deprecated)]
         if let Err(e) = window.configure(Some(Rectangle::from_loc_and_size((0, 0), (suggest_w, suggest_h)))) {
             warn!("XWayland: unfullscreen configure failed: {e}");
         }

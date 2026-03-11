@@ -18,14 +18,25 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const require = createRequire(import.meta.url);
 
-// Debug logging to file
+// Debug logging to file — buffered to avoid synchronous I/O in hot paths
 const DEBUG_LOG = '/tmp/wo-electron-debug.log';
-function debugLog(...args: any[]) {
-  const msg = `[${new Date().toISOString()}] ` + args.join(' ') + '\n';
+let _logBuffer: string[] = [];
+let _logTimer: ReturnType<typeof setTimeout> | null = null;
+function _flushLog() {
+  if (_logBuffer.length === 0) return;
   try {
-    fs.appendFileSync(DEBUG_LOG, msg);
+    fs.appendFileSync(DEBUG_LOG, _logBuffer.join(''));
   } catch (e) {
     // ignore
+  }
+  _logBuffer = [];
+  _logTimer = null;
+}
+function debugLog(...args: any[]) {
+  const msg = `[${new Date().toISOString()}] ` + args.join(' ') + '\n';
+  _logBuffer.push(msg);
+  if (!_logTimer) {
+    _logTimer = setTimeout(_flushLog, 100);
   }
   console.log(...args);
 }
@@ -33,15 +44,18 @@ function debugLog(...args: any[]) {
 debugLog('[Wo] Electron starting, NODE_VERSION=', process.version);
 
 // GPU acceleration & rendering performance flags (must be set before app 'ready')
+// Note: core flags (--in-process-gpu, --use-gl=egl, --ozone-platform=wayland)
+// are set on the command line in the Rust spawn().  Flags below augment those.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('enable-features',
-  'CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder');
-app.commandLine.appendSwitch('use-gl', 'egl');
+  'CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder,SharedArrayBuffer,RawDraw');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-gpu-vsync');
 debugLog('[Wo] GPU acceleration flags applied');
 
 type ClientWindowInfo = {
@@ -85,9 +99,28 @@ let nativeDmabuf: any = null;
 let compositorRxBuffer = Buffer.alloc(64 * 1024);
 let rxWriteOffset = 0; // next write position
 let rxReadOffset = 0;  // next read position
-const surfaceBufferPending = new Map<string, { name: string; width: number; height: number; stride: number; pixels: Buffer; damageRects?: Array<{x: number; y: number; width: number; height: number}> }>();
-let surfaceBufferFlushScheduled = false;
-const shmReadBufferCache = new Map<string, Buffer>();
+// ── Zero-copy surface buffer transfer via SharedArrayBuffer ──
+// One SAB per window.  The main process mmap's compositor memfd data into
+// the SAB; the renderer reads directly from the same memory — no
+// structured-clone serialization across the Electron IPC boundary.
+type SabEntry = {
+  sab: SharedArrayBuffer;
+  width: number;
+  height: number;
+  stride: number;
+};
+const surfaceSabCache = new Map<string, SabEntry>();
+// Lightweight generation counter + damage rects sent via IPC instead of pixels
+const surfaceUpdatePending = new Map<string, {
+  name: string;
+  width: number;
+  height: number;
+  stride: number;
+  generation: number;
+  damageRects?: Array<{x: number; y: number; width: number; height: number}>;
+}>();
+let surfaceUpdateGeneration = 0;
+let surfaceUpdateFlushScheduled = false;
 const shmFdCache = new Map<string, { pid: number; fd: number; extFd: number }>();
 
 /** Append incoming chunk to the rx ring buffer, growing if needed. */
@@ -158,26 +191,39 @@ function getOrOpenShmFd(windowName: string, pid: number, fd: number): number {
   return extFd;
 }
 
-function getReusableShmBuffer(windowName: string, size: number): Buffer {
-  const existing = shmReadBufferCache.get(windowName);
-  if (existing && existing.length >= size) {
+function getOrCreateSab(windowName: string, width: number, height: number, stride: number): SabEntry {
+  const existing = surfaceSabCache.get(windowName);
+  const neededSize = stride * height;
+  if (existing && existing.sab.byteLength >= neededSize && existing.width === width && existing.height === height && existing.stride === stride) {
     return existing;
   }
-  const next = Buffer.allocUnsafe(size);
-  shmReadBufferCache.set(windowName, next);
-  return next;
+  const sab = new SharedArrayBuffer(neededSize);
+  const entry: SabEntry = { sab, width, height, stride };
+  surfaceSabCache.set(windowName, entry);
+  // Tell renderer about the new SAB so it can reference it
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.postMessage('wo:surface-sab', {
+      name: windowName,
+      sab,
+      width,
+      height,
+      stride,
+    });
+  }
+  return entry;
 }
 
-function flushSurfaceBuffers() {
-  surfaceBufferFlushScheduled = false;
-  if (!mainWindow || mainWindow.isDestroyed()) { surfaceBufferPending.clear(); return; }
-  for (const entry of surfaceBufferPending.values()) {
-    mainWindow.webContents.send('wo:surface-buffer', entry);
+function flushSurfaceUpdates() {
+  surfaceUpdateFlushScheduled = false;
+  if (!mainWindow || mainWindow.isDestroyed()) { surfaceUpdatePending.clear(); return; }
+  for (const entry of surfaceUpdatePending.values()) {
+    // Send only metadata (no pixels) — the renderer reads from SAB directly
+    mainWindow.webContents.send('wo:surface-update', entry);
   }
-  surfaceBufferPending.clear();
+  surfaceUpdatePending.clear();
 }
 const inFlightFrameSeqs = new Set<string>();
-const MAX_IN_FLIGHT_FRAMES = 2;
+const MAX_IN_FLIGHT_FRAMES = 3;
 // When the app uses compositor.submitDamageFrame() directly, skip OSR paint path to avoid double submission
 let appUsedDamageHelper = false;
 // Track pointer position for mouse button/scroll events (window-local coords)
@@ -1084,6 +1130,23 @@ function connectToCompositor(): Promise<void> {
             try {
               const parsed = JSON.parse(metadata);
               if (parsed && Array.isArray(parsed.windows)) {
+                // Clean up caches for windows that disappeared
+                const currentNames = new Set((parsed.windows as Array<{name?: string}>).map(w => w.name).filter(Boolean));
+                for (const cachedName of surfaceSabCache.keys()) {
+                  if (!currentNames.has(cachedName)) {
+                    surfaceSabCache.delete(cachedName);
+                  }
+                }
+                for (const cachedName of shmFdCache.keys()) {
+                  if (!currentNames.has(cachedName)) {
+                    const entry = shmFdCache.get(cachedName);
+                    if (entry) {
+                      try { fs.closeSync(entry.extFd); } catch { /* ignore */ }
+                    }
+                    shmFdCache.delete(cachedName);
+                  }
+                }
+
                 compositorWindows = parsed.windows;
                 mainWindow.webContents.send('wo:windows', compositorWindows);
               }
@@ -1125,13 +1188,13 @@ function connectToCompositor(): Promise<void> {
           try {
             const extFd = getOrOpenShmFd(windowName, pid, fd);
             const fullSize = sbStride * sbHeight;
-            const safeBuffer = getReusableShmBuffer(windowName, fullSize);
 
-            // Partial read: only read damaged rows from memfd.
-            // Empty damageRects = full frame update (always do full read).
-            // Also do full read on first frame for this window (buffer is uninitialized).
+            // Ensure a SAB exists for this window at the right dimensions
+            const sabEntry = getOrCreateSab(windowName, sbWidth, sbHeight, sbStride);
+
             const hasUsableRects = damageRects.length > 0 && damageRects.length < 64;
-            if (hasUsableRects) {
+            if (hasUsableRects && nativeDmabuf?.copyMmapDamageToSab) {
+              // Partial damage: mmap and copy only damaged row bands into SAB
               let minY = sbHeight, maxY = 0;
               for (const r of damageRects) {
                 const ry = Math.max(0, r.y);
@@ -1140,36 +1203,36 @@ function connectToCompositor(): Promise<void> {
                 if (ryEnd > maxY) maxY = ryEnd;
               }
               if (minY < maxY) {
-                const readOffset = minY * sbStride;
-                const readLen = (maxY - minY) * sbStride;
-                let totalRead = 0;
-                while (totalRead < readLen) {
-                  const bytesRead = fs.readSync(extFd, safeBuffer, readOffset + totalRead, readLen - totalRead, readOffset + totalRead);
-                  if (bytesRead <= 0) break;
-                  totalRead += bytesRead;
-                }
+                nativeDmabuf.copyMmapDamageToSab(extFd, sabEntry.sab, sbStride, [
+                  { y: minY, h: maxY - minY },
+                ]);
               }
+            } else if (nativeDmabuf?.copyMmapToSab) {
+              // Full frame: mmap entire buffer into SAB
+              nativeDmabuf.copyMmapToSab(extFd, sabEntry.sab, fullSize);
             } else {
-              // Full read (no rects, too many rects, or first frame)
+              // Fallback: fs.readSync into a temporary buffer, then copy to SAB
+              const tmpBuf = Buffer.alloc(fullSize);
               let totalRead = 0;
               while (totalRead < fullSize) {
-                const bytesRead = fs.readSync(extFd, safeBuffer, totalRead, fullSize - totalRead, totalRead);
+                const bytesRead = fs.readSync(extFd, tmpBuf, totalRead, fullSize - totalRead, totalRead);
                 if (bytesRead <= 0) break;
                 totalRead += bytesRead;
               }
+              new Uint8Array(sabEntry.sab).set(new Uint8Array(tmpBuf.buffer, tmpBuf.byteOffset, tmpBuf.byteLength));
             }
 
-            surfaceBufferPending.set(windowName, {
+            surfaceUpdatePending.set(windowName, {
               name: windowName,
               width: sbWidth,
               height: sbHeight,
               stride: sbStride,
-              pixels: safeBuffer,
+              generation: ++surfaceUpdateGeneration,
               damageRects: hasUsableRects ? damageRects : undefined,
             });
-            if (!surfaceBufferFlushScheduled) {
-              surfaceBufferFlushScheduled = true;
-              setImmediate(flushSurfaceBuffers);
+            if (!surfaceUpdateFlushScheduled) {
+              surfaceUpdateFlushScheduled = true;
+              setImmediate(flushSurfaceUpdates);
             }
           } catch (err) {
             const cached = shmFdCache.get(windowName);
@@ -1311,7 +1374,13 @@ function connectToCompositor(): Promise<void> {
       ipcSocket = null;
       dmabufSender = null;
       inFlightFrameSeqs.clear();
-      compositorRxBuffer = Buffer.alloc(0);
+      compositorRxBuffer = Buffer.alloc(64 * 1024);
+      rxWriteOffset = 0;
+      rxReadOffset = 0;
+      // Clean up surface caches
+      surfaceSabCache.clear();
+      surfaceUpdatePending.clear();
+      closeShmFdCache();
       scheduleIpcReconnect();
     });
 
@@ -1736,6 +1805,18 @@ async function createWindow() {
       show: CLIENT_MODE,
     });
 
+    // Enable SharedArrayBuffer in the renderer by injecting
+    // cross-origin isolation headers on all responses.
+    mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Cross-Origin-Opener-Policy': ['same-origin'],
+          'Cross-Origin-Embedder-Policy': ['require-corp'],
+        },
+      });
+    });
+
     debugLog('[Wo] BrowserWindow created, CLIENT_MODE=' + CLIENT_MODE + ' offscreen=' + !CLIENT_MODE);
 
     setupIpcHandlers();
@@ -1775,12 +1856,22 @@ async function createWindow() {
       mainWindow.webContents.on('did-finish-load', () => {
         mainWindow!.webContents.setFrameRate(WINDOW_CONFIG.fps ?? 60);
       });
+
+      // Invalidate periodically to ensure continuous repaints for dynamic
+      // content.  We only invalidate when below the in-flight limit so we
+      // don't pile up redundant paints while the compositor is still
+      // processing previous frames.
       const frameIntervalMs = Math.round(1000 / (WINDOW_CONFIG.fps ?? 60));
       setInterval(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow && !mainWindow.isDestroyed() && inFlightFrameSeqs.size < MAX_IN_FLIGHT_FRAMES) {
           mainWindow.webContents.invalidate();
         }
       }, frameIntervalMs);
+
+      // Reusable patch buffer to avoid allocating a new typed array on
+      // every partial-update paint event.
+      let patchBuf: Uint8Array | null = null;
+
       let skippedCount = 0;
       mainWindow.webContents.on('paint', (_event, dirty, image) => {
         if (!dmabufSender || !ipcConnected) {
@@ -1802,7 +1893,7 @@ async function createWindow() {
         if (!damageBuffer) {
           damageBuffer = new DamageBuffer(size.width, size.height);
         }
-        const pixels = image.getBitmap();
+        const pixels = image.toBitmap();
         const pixelData = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
 
         // Use dirty rect to avoid full-frame copy when only a region changed
@@ -1816,10 +1907,18 @@ async function createWindow() {
             fullFrame: pixelData,
           });
         } else {
-          // Partial update — copy only the dirty region into the damage buffer
+          // Partial update — copy only the dirty region into the damage
+          // buffer.  Reuse a single scratch buffer to avoid per-frame GC
+          // pressure from allocating a new Uint8Array every paint.
           const stride = size.width * 4;
           const patchStride = dirty.width * 4;
-          const patchData = new Uint8Array(dirty.width * dirty.height * 4);
+          const patchBytes = patchStride * dirty.height;
+          if (!patchBuf || patchBuf.byteLength < patchBytes) {
+            patchBuf = new Uint8Array(patchBytes);
+          }
+          const patchData = patchBuf.byteLength === patchBytes
+            ? patchBuf
+            : patchBuf.subarray(0, patchBytes);
           for (let row = 0; row < dirty.height; row++) {
             const srcOff = (dirty.y + row) * stride + dirty.x * 4;
             const dstOff = row * patchStride;
@@ -1886,6 +1985,12 @@ async function createWindow() {
 
 app.on('ready', async () => {
   debugLog('[Wo] App ready, CLIENT_MODE=', CLIENT_MODE, 'WO_STANDALONE=', process.env.WO_STANDALONE);
+
+  // Log GPU status so we can verify hardware acceleration is active.
+  const gpuInfo = app.getGPUFeatureStatus();
+  debugLog('[Wo] GPU feature status:', JSON.stringify(gpuInfo));
+  debugLog('[Wo] GPU info:', JSON.stringify(app.getGPUInfo('basic').catch(() => ({}))));
+
   try {
     startPortalUiBridge();
 

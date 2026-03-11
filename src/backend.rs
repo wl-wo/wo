@@ -8,6 +8,7 @@ use smithay::utils::{Physical, Rectangle};
 use crate::dmabuf::ElectronTexture;
 
 /// Common interface for rendering frames across different backends
+#[allow(dead_code)]
 pub trait RenderBackend {
     /// Begin rendering a new frame with the given size and transform
     fn begin_frame(&mut self, width: i32, height: i32) -> Result<()>;
@@ -36,12 +37,14 @@ pub trait RenderBackend {
 }
 
 /// Frame abstraction for rendering operations
+#[allow(dead_code)]
 pub struct Frame {
     pub transform: smithay::utils::Transform,
     pub output_rect: Rectangle<i32, Physical>,
 }
 
 impl Frame {
+    #[allow(dead_code)]
     pub fn new(output_rect: Rectangle<i32, Physical>) -> Self {
         Frame {
             transform: smithay::utils::Transform::Normal,

@@ -612,7 +612,7 @@ impl WoState {
     /// The actual forwarding is handled by process_input_event.
     pub fn forward_input_to_electron<B: smithay::backend::input::InputBackend>(
         &mut self,
-        event: &smithay::backend::input::InputEvent<B>,
+        _event: &smithay::backend::input::InputEvent<B>,
     ) {
         // The actual forwarding is done by process_input_event which is called separately
         // This is a no-op wrapper that exists for API compatibility with nested.rs

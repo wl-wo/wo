@@ -48,7 +48,6 @@ impl WindowDmabufCache {
     /// Returns Ok(true) if pixels were successfully updated.
     #[allow(dead_code)]
     pub fn update_pixels(&mut self, pixels: &[u8]) -> Result<()> {
-        use std::os::unix::io::AsRawFd;
         use nix::unistd;
 
         // Seek to start
@@ -209,6 +208,7 @@ pub fn export_dmabuf_for_client(texture: &ElectronTexture) -> Dmabuf {
 }
 
 /// Re-import a cached DMABUF frame into a renderer (used during rendering).
+#[allow(dead_code)]
 pub fn reimport_cached_frame(
     renderer: &mut GlesRenderer,
     cached: &CachedDmabufFrame,
@@ -277,8 +277,6 @@ pub fn export_texture_as_dmabuf(
     // For now, we'll read pixels and create a DMABUF from them
     // A more optimal approach would use EGLImage to back the DMABUF, but
     // this is simpler and still zero-copy at the IPC boundary
-    use smithay::utils::Rectangle;
-
     // This would need a mutable reference, which we don't have
     // So instead, for each window we'll create DMABUF on-demand after pixelreads
     anyhow::bail!("texture export not directly supported; use create_temp_dmabuf_from_pixels after reading pixels")

@@ -54,6 +54,7 @@ pub const MAGIC_SCREENCOPY_EVENT: u32 = 0x574F5345; // "WOSE" — screencopy cap
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub struct PlaneInfoWire {
     pub offset: u32,
     pub stride: u32,
@@ -329,7 +330,6 @@ impl ElectronClientConnection {
 
         // For each plane: fd(4) + offset(8) + stride(4) + modifier(8)
         // Note: We'll collect actual plane data from dmabuf handles iterator
-        let mut plane_idx = 0;
         for _handle in dmabuf.handles() {
             // fd: will be sent via ancillary data, so we put 0 as placeholder
             buf[off..off + 4].copy_from_slice(&0u32.to_le_bytes());
@@ -345,7 +345,6 @@ impl ElectronClientConnection {
             let modifier_val: u64 = format.modifier.into();
             buf[off..off + 8].copy_from_slice(&modifier_val.to_le_bytes());
             off += 8;
-            plane_idx += 1;
         }
 
         // Send metadata with file descriptors as ancillary data
@@ -600,25 +599,39 @@ impl ElectronProcess {
             .env("WO_IPC_SOCKET", ipc_socket)
             .env("WO_WINDOW_CONFIG", &serialized)
             .env("WO_DRM_RENDER_NODE", render_node)
-            // Headless Ozone backend: Electron is used purely for offscreen
-            // rendering — it must not try to connect to a Wayland or X11
-            // display server (there is none for it to connect to; *we* are
-            // the compositor).  The headless platform lets Chromium's OSR
-            // paint pipeline work while the native wo_dmabuf module handles
-            // GPU buffer allocation via its own GBM/EGL context on the
-            // render node.
-            .arg("--ozone-platform=headless")
+            // Wayland Ozone platform: Electron connects to our own Wayland
+            // compositor (WAYLAND_DISPLAY is already set in the env) for
+            // GPU/EGL initialisation.  This gives Chromium a proper
+            // wayland-egl display so hardware-accelerated rasterisation
+            // works.  The BrowserWindow still uses `offscreen: true`, so
+            // no Wayland surfaces are mapped — the connection is used
+            // solely for the EGL context.
+            //
+            // The previous `--ozone-platform=headless` approach failed
+            // because headless Ozone has no EGL display, causing the GPU
+            // subprocess to crash with "gl=none,angle=none not found" and
+            // silently falling back to ~1 FPS software rasterisation.
+            .arg("--ozone-platform=wayland")
             .arg("--no-sandbox")
             .arg("--disable-gpu-sandbox")
-            // Use the *software* GL implementation inside Chromium for its
-            // own compositing (we do not need hardware-accelerated web
-            // content — the paint callback gives us BGRA bitmaps that the
-            // native module imports into a GBM BO).  This avoids Chromium
-            // fighting with the compositor over the DRM render node.
-            .arg("--use-gl=swiftshader")
-            // Make sure OSR (offscreen) rendering actually produces
-            // paint callbacks at the requested frame rate.
-            .arg("--enable-features=Vulkan")
+            // Run GPU code in the main Electron process to avoid the
+            // separate GPU subprocess which adds IPC overhead and can
+            // fail to initialise independently.
+            .arg("--in-process-gpu")
+            // Use native EGL (provided by wayland-egl through the Ozone
+            // Wayland platform) for Chromium's compositor.
+            .arg("--use-gl=egl")
+            // Disable GPU vsync — we are rendering offscreen, there is
+            // no physical display to synchronise with.
+            .arg("--disable-gpu-vsync")
+            // Enable GPU-accelerated rasterization and zero-copy features
+            // so OSR paint callbacks deliver GPU-backed bitmaps instead
+            // of slow CPU readbacks.
+            .arg("--enable-features=CanvasOopRasterization,Vulkan,VaapiVideoDecoder,RawDraw,SharedArrayBuffer")
+            // Use multiple raster threads for parallelised tile painting.
+            .arg("--num-raster-threads=4")
+            // Don't throttle renderers that lose focus.
+            .arg("--disable-renderer-backgrounding")
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -1253,7 +1266,7 @@ fn write_nonblocking(fd: RawFd, buf: &[u8]) -> Result<()> {
         return match send(fd, buf, MsgFlags::MSG_DONTWAIT) {
             Ok(n) if n == buf.len() => Ok(()),
             Ok(_) => Ok(()), // partial write — drop silently, stream may be corrupt
-            Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => Ok(()),
+            Err(nix::errno::Errno::EAGAIN) => Ok(()),
             Err(e) => Err(anyhow::anyhow!("IPC non-blocking write: {e}")),
         };
     }
@@ -1280,7 +1293,7 @@ fn write_nonblocking(fd: RawFd, buf: &[u8]) -> Result<()> {
             "IPC partial non-blocking write: {n}/{} bytes sent despite space check",
             buf.len()
         )),
-        Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => Ok(()),
+        Err(nix::errno::Errno::EAGAIN) => Ok(()),
         Err(e) => Err(anyhow::anyhow!("IPC non-blocking write: {e}")),
     }
 }

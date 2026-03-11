@@ -7,7 +7,7 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::gles::GlesTexture;
 use smithay::backend::renderer::ImportMem;
-use smithay::utils::{Buffer as BufferCoord, Size};
+use smithay::utils::Size;
 use std::collections::HashMap;
 use tracing::{info, warn};
 

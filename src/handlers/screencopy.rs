@@ -3,7 +3,6 @@
 /// Implements `zwlr_screencopy_manager_v1` allowing clients like grim, OBS, etc.
 /// to request frame copies of outputs or output regions.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 use wayland_protocols_wlr::screencopy::v1::server::{
@@ -12,7 +11,7 @@ use wayland_protocols_wlr::screencopy::v1::server::{
 };
 use wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
-    protocol::{wl_buffer::WlBuffer, wl_output::WlOutput, wl_shm},
+    protocol::{wl_buffer::WlBuffer, wl_shm},
 };
 
 use crate::state::WoState;

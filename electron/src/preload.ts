@@ -51,11 +51,29 @@ const compositorAPI: CompositorAPI = {
   },
 
   // Surface buffer: Wayland window pixel content from compositor
+  // Legacy path for backward compatibility (full pixel copy via IPC)
   onSurfaceBuffer: (callback: (data: { name: string; width: number; height: number; stride: number; pixels: Buffer; damageRects?: Array<{x: number; y: number; width: number; height: number}> }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: { name: string; width: number; height: number; stride: number; pixels: Buffer; damageRects?: Array<{x: number; y: number; width: number; height: number}> }) =>
       callback(data);
     ipcRenderer.on('wo:surface-buffer', handler);
     return () => ipcRenderer.removeListener('wo:surface-buffer', handler);
+  },
+
+  // Zero-copy surface buffer via SharedArrayBuffer.
+  // 'wo:surface-sab' delivers the SAB once per window (or on resize).
+  // 'wo:surface-update' is a lightweight signal (no pixels) when new data is ready.
+  onSurfaceSab: (callback: (data: { name: string; sab: SharedArrayBuffer; width: number; height: number; stride: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { name: string; sab: SharedArrayBuffer; width: number; height: number; stride: number }) =>
+      callback(data);
+    ipcRenderer.on('wo:surface-sab', handler);
+    return () => ipcRenderer.removeListener('wo:surface-sab', handler);
+  },
+
+  onSurfaceUpdate: (callback: (data: { name: string; width: number; height: number; stride: number; generation: number; damageRects?: Array<{x: number; y: number; width: number; height: number}> }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { name: string; width: number; height: number; stride: number; generation: number; damageRects?: Array<{x: number; y: number; width: number; height: number}> }) =>
+      callback(data);
+    ipcRenderer.on('wo:surface-update', handler);
+    return () => ipcRenderer.removeListener('wo:surface-update', handler);
   },
 
   createDamageHelper: (options: RendererDamageHelperOptions): RendererDamageHelper => {

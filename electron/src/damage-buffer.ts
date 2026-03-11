@@ -60,6 +60,8 @@ type NativeDmabufModule = {
   sendFd: (socketFd: number, dmabufFd: number) => void;
   recvFd: (socketFd: number) => number;
   mmapFd: (fd: number, size: number) => Buffer;
+  copyMmapToSab: (fd: number, sab: SharedArrayBuffer, size: number, srcOff?: number, dstOff?: number) => void;
+  copyMmapDamageToSab: (fd: number, sab: SharedArrayBuffer, stride: number, rects: Array<{y: number; h: number}>) => void;
   importDmabufTexture: (windowName: string, fd: number, width: number, height: number, format: number) => { texture: number; width: number; height: number };
   getTexture: (windowName: string) => { texture: number; width: number; height: number } | null;
   releaseTexture: (windowName: string) => void;
@@ -105,7 +107,8 @@ export class DamageBuffer {
 
   applyFullFrame(frame: Uint8Array, frameStride: number = this.width * 4): void {
     if (frameStride === this.stride) {
-      Buffer.from(frame).copy(this.frame, 0, 0, this.frame.length);
+      // Fast path: direct typed-array copy, no intermediate Buffer wrapper
+      this.frame.set(new Uint8Array(frame.buffer, frame.byteOffset, this.frame.length));
       return;
     }
 
@@ -113,7 +116,10 @@ export class DamageBuffer {
     for (let y = 0; y < this.height; y += 1) {
       const srcStart = y * frameStride;
       const dstStart = y * this.stride;
-      Buffer.from(frame).copy(this.frame, dstStart, srcStart, srcStart + rowBytes);
+      this.frame.set(
+        new Uint8Array(frame.buffer, frame.byteOffset + srcStart, rowBytes),
+        dstStart,
+      );
     }
   }
 
@@ -130,7 +136,10 @@ export class DamageBuffer {
     for (let row = 0; row < rect.height; row += 1) {
       const srcStart = row * patchStride;
       const dstStart = (rect.y + row) * this.stride + dstStartX;
-      Buffer.from(patch.rgba).copy(this.frame, dstStart, srcStart, srcStart + rowBytes);
+      this.frame.set(
+        new Uint8Array(patch.rgba.buffer, patch.rgba.byteOffset + srcStart, rowBytes),
+        dstStart,
+      );
     }
   }
 
@@ -146,11 +155,35 @@ export class WoDmabufSender {
   private readonly windowName: string;
   private readonly native: NativeDmabufModule;
   private seq = 1n;
+  // Pre-allocated wire buffer: header (variable) + plane (16 bytes).
+  // Layout: MAGIC(4) + nameLen(4) + name(N) + seq(8) + w(4) + h(4) + fmt(4) + planes(4) + plane(16)
+  private readonly wireBuf: Buffer;
+  private readonly nameLen: number;
+  private readonly seqOffset: number;
+  private readonly widthOffset: number;
+  private readonly heightOffset: number;
 
   constructor(socket: Socket, windowName: string, native: NativeDmabufModule) {
     this.socket = socket;
     this.windowName = windowName;
     this.native = native;
+
+    const nameBuf = Buffer.from(windowName, 'utf8');
+    this.nameLen = nameBuf.length;
+    // header = 4+4+nameLen+8+4+4+4+4 = 32+nameLen, plus 16 bytes for plane
+    const totalLen = 32 + this.nameLen + 16;
+    this.wireBuf = Buffer.alloc(totalLen);
+
+    // Static fields that never change
+    let off = 0;
+    this.wireBuf.writeUInt32LE(MAGIC.FRAME, off); off += 4;
+    this.wireBuf.writeUInt32LE(this.nameLen, off); off += 4;
+    nameBuf.copy(this.wireBuf, off); off += this.nameLen;
+    this.seqOffset = off; off += 8;
+    this.widthOffset = off; off += 4;
+    this.heightOffset = off; off += 4;
+    this.wireBuf.writeUInt32LE(ARGB8888, off); off += 4;
+    this.wireBuf.writeUInt32LE(1, off); // planes count = 1
   }
 
   send(buffer: DamageBuffer): bigint {
@@ -164,32 +197,19 @@ export class WoDmabufSender {
     try {
       const socketFd = getSocketFd(this.socket);
 
-      const nameBuf = Buffer.from(this.windowName, 'utf8');
-      const header = Buffer.alloc(4 + 4 + nameBuf.length + 8 + 4 + 4 + 4 + 4);
-      let offset = 0;
-      header.writeUInt32LE(MAGIC.FRAME, offset); offset += 4;
-      header.writeUInt32LE(nameBuf.length, offset); offset += 4;
-      nameBuf.copy(header, offset); offset += nameBuf.length;
-      header.writeBigUInt64LE(this.seq, offset); offset += 8;
-      header.writeUInt32LE(buffer.getWidth(), offset); offset += 4;
-      header.writeUInt32LE(buffer.getHeight(), offset); offset += 4;
-      header.writeUInt32LE(ARGB8888, offset); offset += 4;
-      header.writeUInt32LE(1, offset);
+      // Write per-frame fields into the pre-allocated buffer
+      this.wireBuf.writeBigUInt64LE(this.seq, this.seqOffset);
+      this.wireBuf.writeUInt32LE(buffer.getWidth(), this.widthOffset);
+      this.wireBuf.writeUInt32LE(buffer.getHeight(), this.heightOffset);
 
-      const plane = Buffer.alloc(16);
-      plane.writeUInt32LE(imported.offset, 0);
-      plane.writeUInt32LE(imported.stride, 4);
-      plane.writeUInt32LE(imported.modifier_hi, 8);
-      plane.writeUInt32LE(imported.modifier_lo, 12);
+      // Plane data (last 16 bytes of wireBuf)
+      const planeOff = this.wireBuf.length - 16;
+      this.wireBuf.writeUInt32LE(imported.offset, planeOff);
+      this.wireBuf.writeUInt32LE(imported.stride, planeOff + 4);
+      this.wireBuf.writeUInt32LE(imported.modifier_hi, planeOff + 8);
+      this.wireBuf.writeUInt32LE(imported.modifier_lo, planeOff + 12);
 
-      // CRITICAL: We must use synchronous, unbuffered writes to the raw
-      // socket fd so that the header+plane bytes are in the kernel buffer
-      // BEFORE sendFd's sendmsg() call.  Node's socket.write() is async
-      // and buffers in userspace — sendFd (a native sendmsg) would race
-      // ahead, delivering the SCM_RIGHTS ancillary data before the header
-      // bytes, corrupting the protocol framing on the compositor side.
-      const combined = Buffer.concat([header, plane]);
-      writeSync(socketFd, combined, 0, combined.length);
+      writeSync(socketFd, this.wireBuf, 0, this.wireBuf.length);
       this.native.sendFd(socketFd, imported.fd);
 
       const sentSeq = this.seq;

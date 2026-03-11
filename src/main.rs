@@ -15,7 +15,7 @@ use gbm::Modifier;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use smithay::backend::allocator::{Fourcc, Slot};
 
-use smithay::backend::renderer::element::{Element, RenderElement};
+use smithay::backend::renderer::element::Element;
 use smithay::wayland::xdg_activation::{XdgActivationToken, XdgActivationTokenData};
 use smithay::{
     backend::{
@@ -770,8 +770,6 @@ fn render_frame(data: &mut EventLoopData) {
             use smithay::reexports::wayland_server::Resource;
             use smithay::wayland::compositor::{with_states, Damage, SurfaceAttributes};
             use smithay::wayland::shm::with_buffer_contents;
-            use std::os::unix::io::AsRawFd;
-            use nix::sys::memfd::MFdFlags;
             use tracing::debug;
 
             let pid = std::process::id();

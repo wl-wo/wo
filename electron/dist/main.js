@@ -88,14 +88,14 @@ class DamageBuffer {
   }
   applyFullFrame(frame, frameStride = this.width * 4) {
     if (frameStride === this.stride) {
-      Buffer.from(frame).copy(this.frame, 0, 0, this.frame.length);
+      this.frame.set(new Uint8Array(frame.buffer, frame.byteOffset, this.frame.length));
       return;
     }
     const rowBytes = Math.min(frameStride, this.stride);
     for (let y = 0;y < this.height; y += 1) {
       const srcStart = y * frameStride;
       const dstStart = y * this.stride;
-      Buffer.from(frame).copy(this.frame, dstStart, srcStart, srcStart + rowBytes);
+      this.frame.set(new Uint8Array(frame.buffer, frame.byteOffset + srcStart, rowBytes), dstStart);
     }
   }
   applyPatch(patch) {
@@ -109,7 +109,7 @@ class DamageBuffer {
     for (let row = 0;row < rect.height; row += 1) {
       const srcStart = row * patchStride;
       const dstStart = (rect.y + row) * this.stride + dstStartX;
-      Buffer.from(patch.rgba).copy(this.frame, dstStart, srcStart, srcStart + rowBytes);
+      this.frame.set(new Uint8Array(patch.rgba.buffer, patch.rgba.byteOffset + srcStart, rowBytes), dstStart);
     }
   }
   applyPatches(patches) {
@@ -124,40 +124,49 @@ class WoDmabufSender {
   windowName;
   native;
   seq = 1n;
+  wireBuf;
+  nameLen;
+  seqOffset;
+  widthOffset;
+  heightOffset;
   constructor(socket, windowName, native) {
     this.socket = socket;
     this.windowName = windowName;
     this.native = native;
+    const nameBuf = Buffer.from(windowName, "utf8");
+    this.nameLen = nameBuf.length;
+    const totalLen = 32 + this.nameLen + 16;
+    this.wireBuf = Buffer.alloc(totalLen);
+    let off = 0;
+    this.wireBuf.writeUInt32LE(MAGIC.FRAME, off);
+    off += 4;
+    this.wireBuf.writeUInt32LE(this.nameLen, off);
+    off += 4;
+    nameBuf.copy(this.wireBuf, off);
+    off += this.nameLen;
+    this.seqOffset = off;
+    off += 8;
+    this.widthOffset = off;
+    off += 4;
+    this.heightOffset = off;
+    off += 4;
+    this.wireBuf.writeUInt32LE(ARGB8888, off);
+    off += 4;
+    this.wireBuf.writeUInt32LE(1, off);
   }
   send(buffer) {
     const imported = this.native.importRgba(buffer.getFrameBuffer(), buffer.getWidth(), buffer.getHeight(), buffer.getStride());
     try {
       const socketFd = getSocketFd(this.socket);
-      const nameBuf = Buffer.from(this.windowName, "utf8");
-      const header = Buffer.alloc(4 + 4 + nameBuf.length + 8 + 4 + 4 + 4 + 4);
-      let offset = 0;
-      header.writeUInt32LE(MAGIC.FRAME, offset);
-      offset += 4;
-      header.writeUInt32LE(nameBuf.length, offset);
-      offset += 4;
-      nameBuf.copy(header, offset);
-      offset += nameBuf.length;
-      header.writeBigUInt64LE(this.seq, offset);
-      offset += 8;
-      header.writeUInt32LE(buffer.getWidth(), offset);
-      offset += 4;
-      header.writeUInt32LE(buffer.getHeight(), offset);
-      offset += 4;
-      header.writeUInt32LE(ARGB8888, offset);
-      offset += 4;
-      header.writeUInt32LE(1, offset);
-      const plane = Buffer.alloc(16);
-      plane.writeUInt32LE(imported.offset, 0);
-      plane.writeUInt32LE(imported.stride, 4);
-      plane.writeUInt32LE(imported.modifier_hi, 8);
-      plane.writeUInt32LE(imported.modifier_lo, 12);
-      const combined = Buffer.concat([header, plane]);
-      writeSync(socketFd, combined, 0, combined.length);
+      this.wireBuf.writeBigUInt64LE(this.seq, this.seqOffset);
+      this.wireBuf.writeUInt32LE(buffer.getWidth(), this.widthOffset);
+      this.wireBuf.writeUInt32LE(buffer.getHeight(), this.heightOffset);
+      const planeOff = this.wireBuf.length - 16;
+      this.wireBuf.writeUInt32LE(imported.offset, planeOff);
+      this.wireBuf.writeUInt32LE(imported.stride, planeOff + 4);
+      this.wireBuf.writeUInt32LE(imported.modifier_hi, planeOff + 8);
+      this.wireBuf.writeUInt32LE(imported.modifier_lo, planeOff + 12);
+      writeSync(socketFd, this.wireBuf, 0, this.wireBuf.length);
       this.native.sendFd(socketFd, imported.fd);
       const sentSeq = this.seq;
       this.seq += 1n;
@@ -205,12 +214,24 @@ var __filename2 = fileURLToPath(import.meta.url);
 var __dirname2 = dirname(__filename2);
 var require2 = createRequire2(import.meta.url);
 var DEBUG_LOG = "/tmp/wo-electron-debug.log";
+var _logBuffer = [];
+var _logTimer = null;
+function _flushLog() {
+  if (_logBuffer.length === 0)
+    return;
+  try {
+    fs.appendFileSync(DEBUG_LOG, _logBuffer.join(""));
+  } catch (e) {}
+  _logBuffer = [];
+  _logTimer = null;
+}
 function debugLog(...args) {
   const msg = `[${new Date().toISOString()}] ` + args.join(" ") + `
 `;
-  try {
-    fs.appendFileSync(DEBUG_LOG, msg);
-  } catch (e) {}
+  _logBuffer.push(msg);
+  if (!_logTimer) {
+    _logTimer = setTimeout(_flushLog, 100);
+  }
   console.log(...args);
 }
 debugLog("[Wo] Electron starting, NODE_VERSION=", process.version);
@@ -219,9 +240,10 @@ app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
 app.commandLine.appendSwitch("disable-software-rasterizer");
-app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder");
-app.commandLine.appendSwitch("use-gl", "egl");
+app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder,SharedArrayBuffer,RawDraw");
 app.commandLine.appendSwitch("enable-accelerated-video-decode");
+app.commandLine.appendSwitch("disable-frame-rate-limit");
+app.commandLine.appendSwitch("disable-gpu-vsync");
 debugLog("[Wo] GPU acceleration flags applied");
 var IPC_SOCKET = process.env.WO_IPC_SOCKET || "/run/user/1000/wo-ipc.sock";
 debugLog("[Wo] WO_WINDOW_CONFIG env =", process.env.WO_WINDOW_CONFIG);
@@ -249,9 +271,10 @@ var nativeDmabuf = null;
 var compositorRxBuffer = Buffer.alloc(64 * 1024);
 var rxWriteOffset = 0;
 var rxReadOffset = 0;
-var surfaceBufferPending = new Map;
-var surfaceBufferFlushScheduled = false;
-var shmReadBufferCache = new Map;
+var surfaceSabCache = new Map;
+var surfaceUpdatePending = new Map;
+var surfaceUpdateGeneration = 0;
+var surfaceUpdateFlushScheduled = false;
 var shmFdCache = new Map;
 function rxAppend(chunk) {
   const needed = rxWriteOffset + chunk.length;
@@ -304,28 +327,39 @@ function getOrOpenShmFd(windowName, pid, fd) {
   shmFdCache.set(windowName, { pid, fd, extFd });
   return extFd;
 }
-function getReusableShmBuffer(windowName, size) {
-  const existing = shmReadBufferCache.get(windowName);
-  if (existing && existing.length >= size) {
+function getOrCreateSab(windowName, width2, height2, stride) {
+  const existing = surfaceSabCache.get(windowName);
+  const neededSize = stride * height2;
+  if (existing && existing.sab.byteLength >= neededSize && existing.width === width2 && existing.height === height2 && existing.stride === stride) {
     return existing;
   }
-  const next = Buffer.allocUnsafe(size);
-  shmReadBufferCache.set(windowName, next);
-  return next;
+  const sab = new SharedArrayBuffer(neededSize);
+  const entry = { sab, width: width2, height: height2, stride };
+  surfaceSabCache.set(windowName, entry);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.postMessage("wo:surface-sab", {
+      name: windowName,
+      sab,
+      width: width2,
+      height: height2,
+      stride
+    });
+  }
+  return entry;
 }
-function flushSurfaceBuffers() {
-  surfaceBufferFlushScheduled = false;
+function flushSurfaceUpdates() {
+  surfaceUpdateFlushScheduled = false;
   if (!mainWindow || mainWindow.isDestroyed()) {
-    surfaceBufferPending.clear();
+    surfaceUpdatePending.clear();
     return;
   }
-  for (const entry of surfaceBufferPending.values()) {
-    mainWindow.webContents.send("wo:surface-buffer", entry);
+  for (const entry of surfaceUpdatePending.values()) {
+    mainWindow.webContents.send("wo:surface-update", entry);
   }
-  surfaceBufferPending.clear();
+  surfaceUpdatePending.clear();
 }
 var inFlightFrameSeqs = new Set;
-var MAX_IN_FLIGHT_FRAMES = 2;
+var MAX_IN_FLIGHT_FRAMES = 3;
 var appUsedDamageHelper = false;
 var pointerX = 0;
 var pointerY = 0;
@@ -1173,6 +1207,23 @@ function connectToCompositor() {
             try {
               const parsed = JSON.parse(metadata);
               if (parsed && Array.isArray(parsed.windows)) {
+                const currentNames = new Set(parsed.windows.map((w) => w.name).filter(Boolean));
+                for (const cachedName of surfaceSabCache.keys()) {
+                  if (!currentNames.has(cachedName)) {
+                    surfaceSabCache.delete(cachedName);
+                  }
+                }
+                for (const cachedName of shmFdCache.keys()) {
+                  if (!currentNames.has(cachedName)) {
+                    const entry = shmFdCache.get(cachedName);
+                    if (entry) {
+                      try {
+                        fs.closeSync(entry.extFd);
+                      } catch {}
+                    }
+                    shmFdCache.delete(cachedName);
+                  }
+                }
                 compositorWindows = parsed.windows;
                 mainWindow.webContents.send("wo:windows", compositorWindows);
               }
@@ -1219,9 +1270,9 @@ function connectToCompositor() {
           try {
             const extFd = getOrOpenShmFd(windowName, pid, fd);
             const fullSize = sbStride * sbHeight;
-            const safeBuffer = getReusableShmBuffer(windowName, fullSize);
+            const sabEntry = getOrCreateSab(windowName, sbWidth, sbHeight, sbStride);
             const hasUsableRects = damageRects.length > 0 && damageRects.length < 64;
-            if (hasUsableRects) {
+            if (hasUsableRects && nativeDmabuf?.copyMmapDamageToSab) {
               let minY = sbHeight, maxY = 0;
               for (const r of damageRects) {
                 const ry = Math.max(0, r.y);
@@ -1232,36 +1283,34 @@ function connectToCompositor() {
                   maxY = ryEnd;
               }
               if (minY < maxY) {
-                const readOffset = minY * sbStride;
-                const readLen = (maxY - minY) * sbStride;
-                let totalRead = 0;
-                while (totalRead < readLen) {
-                  const bytesRead = fs.readSync(extFd, safeBuffer, readOffset + totalRead, readLen - totalRead, readOffset + totalRead);
-                  if (bytesRead <= 0)
-                    break;
-                  totalRead += bytesRead;
-                }
+                nativeDmabuf.copyMmapDamageToSab(extFd, sabEntry.sab, sbStride, [
+                  { y: minY, h: maxY - minY }
+                ]);
               }
+            } else if (nativeDmabuf?.copyMmapToSab) {
+              nativeDmabuf.copyMmapToSab(extFd, sabEntry.sab, fullSize);
             } else {
+              const tmpBuf = Buffer.alloc(fullSize);
               let totalRead = 0;
               while (totalRead < fullSize) {
-                const bytesRead = fs.readSync(extFd, safeBuffer, totalRead, fullSize - totalRead, totalRead);
+                const bytesRead = fs.readSync(extFd, tmpBuf, totalRead, fullSize - totalRead, totalRead);
                 if (bytesRead <= 0)
                   break;
                 totalRead += bytesRead;
               }
+              new Uint8Array(sabEntry.sab).set(new Uint8Array(tmpBuf.buffer, tmpBuf.byteOffset, tmpBuf.byteLength));
             }
-            surfaceBufferPending.set(windowName, {
+            surfaceUpdatePending.set(windowName, {
               name: windowName,
               width: sbWidth,
               height: sbHeight,
               stride: sbStride,
-              pixels: safeBuffer,
+              generation: ++surfaceUpdateGeneration,
               damageRects: hasUsableRects ? damageRects : undefined
             });
-            if (!surfaceBufferFlushScheduled) {
-              surfaceBufferFlushScheduled = true;
-              setImmediate(flushSurfaceBuffers);
+            if (!surfaceUpdateFlushScheduled) {
+              surfaceUpdateFlushScheduled = true;
+              setImmediate(flushSurfaceUpdates);
             }
           } catch (err) {
             const cached = shmFdCache.get(windowName);
@@ -1396,7 +1445,12 @@ function connectToCompositor() {
       ipcSocket = null;
       dmabufSender = null;
       inFlightFrameSeqs.clear();
-      compositorRxBuffer = Buffer.alloc(0);
+      compositorRxBuffer = Buffer.alloc(64 * 1024);
+      rxWriteOffset = 0;
+      rxReadOffset = 0;
+      surfaceSabCache.clear();
+      surfaceUpdatePending.clear();
+      closeShmFdCache();
       scheduleIpcReconnect();
     });
     setTimeout(() => {
@@ -1762,6 +1816,15 @@ async function createWindow() {
       },
       show: CLIENT_MODE
     });
+    mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Cross-Origin-Opener-Policy": ["same-origin"],
+          "Cross-Origin-Embedder-Policy": ["require-corp"]
+        }
+      });
+    });
     debugLog("[Wo] BrowserWindow created, CLIENT_MODE=" + CLIENT_MODE + " offscreen=" + !CLIENT_MODE);
     setupIpcHandlers();
     debugLog("[Wo] setupIpcHandlers completed");
@@ -1794,10 +1857,11 @@ async function createWindow() {
       });
       const frameIntervalMs = Math.round(1000 / (WINDOW_CONFIG.fps ?? 60));
       setInterval(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow && !mainWindow.isDestroyed() && inFlightFrameSeqs.size < MAX_IN_FLIGHT_FRAMES) {
           mainWindow.webContents.invalidate();
         }
       }, frameIntervalMs);
+      let patchBuf = null;
       let skippedCount = 0;
       mainWindow.webContents.on("paint", (_event, dirty, image) => {
         if (!dmabufSender || !ipcConnected) {
@@ -1819,7 +1883,7 @@ async function createWindow() {
         if (!damageBuffer) {
           damageBuffer = new DamageBuffer(size.width, size.height);
         }
-        const pixels = image.getBitmap();
+        const pixels = image.toBitmap();
         const pixelData = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
         const isFullFrame = dirty.x === 0 && dirty.y === 0 && dirty.width === size.width && dirty.height === size.height;
         if (isFullFrame) {
@@ -1831,7 +1895,11 @@ async function createWindow() {
         } else {
           const stride = size.width * 4;
           const patchStride = dirty.width * 4;
-          const patchData = new Uint8Array(dirty.width * dirty.height * 4);
+          const patchBytes = patchStride * dirty.height;
+          if (!patchBuf || patchBuf.byteLength < patchBytes) {
+            patchBuf = new Uint8Array(patchBytes);
+          }
+          const patchData = patchBuf.byteLength === patchBytes ? patchBuf : patchBuf.subarray(0, patchBytes);
           for (let row = 0;row < dirty.height; row++) {
             const srcOff = (dirty.y + row) * stride + dirty.x * 4;
             const dstOff = row * patchStride;
@@ -1885,6 +1953,9 @@ async function createWindow() {
 }
 app.on("ready", async () => {
   debugLog("[Wo] App ready, CLIENT_MODE=", CLIENT_MODE, "WO_STANDALONE=", process.env.WO_STANDALONE);
+  const gpuInfo = app.getGPUFeatureStatus();
+  debugLog("[Wo] GPU feature status:", JSON.stringify(gpuInfo));
+  debugLog("[Wo] GPU info:", JSON.stringify(app.getGPUInfo("basic").catch(() => ({}))));
   try {
     startPortalUiBridge();
     if (!CLIENT_MODE && process.env.WO_STANDALONE !== "1") {

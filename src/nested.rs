@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Result};
 use drm_fourcc::DrmFourcc;
-use nix::sys::memfd::MFdFlags;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use smithay::{
     backend::{
@@ -501,6 +500,12 @@ pub fn run_nested(config: Config) -> Result<()> {
         };
         
         if last_render.elapsed() < adaptive_frame_time {
+            // Sleep for the remaining frame budget instead of busy-looping.
+            // Cap the sleep to avoid missing events for too long.
+            let remaining = adaptive_frame_time.saturating_sub(last_render.elapsed());
+            if remaining > Duration::from_micros(500) {
+                std::thread::sleep(remaining.min(Duration::from_millis(2)));
+            }
             continue;
         }
         last_render = std::time::Instant::now();
@@ -1144,7 +1149,17 @@ pub fn run_nested(config: Config) -> Result<()> {
             warn!("render+submit+callbacks total took {}ms!", render_total_ms);
         }
 
-        std::thread::sleep(Duration::from_micros(100));
+        // Sleep for the remaining frame budget to avoid burning CPU.
+        // The per-frame work above (dispatch + render + submit + callbacks) eats
+        // some of the budget; sleep the rest so the next iteration starts close
+        // to the target frame boundary.
+        let elapsed = loop_t0.elapsed();
+        let target = if input_events_pending { Duration::from_millis(8) } else { frame_time };
+        if elapsed < target {
+            let remaining = target - elapsed;
+            // Don't sleep more than 4ms to stay responsive to new Wayland/IPC events
+            std::thread::sleep(remaining.min(Duration::from_millis(4)));
+        }
 
         // Log if the entire loop iteration was slow.
         let total_loop_ms = loop_t0.elapsed().as_millis();

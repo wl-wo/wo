@@ -299,6 +299,18 @@ export interface Compositor {
    * Fires when Wayland clients (e.g. OBS, grim) capture the screen via wlr-screencopy.
    */
   onScreencopyEvent(callback: (data: ScreencopyEvent) => void): Unsubscribe;
+
+  /**
+   * Receive a SharedArrayBuffer for a given Wayland surface.
+   * Sent once when the SAB is first allocated or reallocated.
+   */
+  onSurfaceSab(callback: (data: SurfaceSabData) => void): Unsubscribe;
+
+  /**
+   * Subscribe to lightweight surface update signals (no pixel payload).
+   * After receiving this, read pixels directly from the previously-sent SAB.
+   */
+  onSurfaceUpdate(callback: (data: SurfaceUpdateData) => void): Unsubscribe;
 }
 
 /** Alias for Compositor to match preload.ts imports */
@@ -313,6 +325,30 @@ export interface SurfaceBufferData {
   height: number;
   stride: number;
   pixels: Uint8Array;
+  damageRects?: DamageRect[];
+}
+
+/**
+ * SharedArrayBuffer registration for a Wayland surface.
+ * Sent once per window when the SAB is first created or reallocated.
+ */
+export interface SurfaceSabData {
+  name: string;
+  width: number;
+  height: number;
+  stride: number;
+  sab: SharedArrayBuffer;
+}
+
+/**
+ * Lightweight surface update signal (no pixel data).
+ * The renderer should read from the previously-received SAB.
+ */
+export interface SurfaceUpdateData {
+  name: string;
+  width: number;
+  height: number;
+  stride: number;
   damageRects?: DamageRect[];
 }
 

@@ -50,6 +50,7 @@ impl XdgShellHandler for WoState {
 
         self.ssd_windows.remove(&oid);
 
+        #[allow(deprecated)]
         let window = Window::new(surface);
         self.all_windows.push(window.clone());
 
@@ -246,7 +247,7 @@ impl XdgShellHandler for WoState {
             .find(|w| w.toplevel().map(|t| t == &surface).unwrap_or(false))
             .cloned();
 
-        if let Some(window) = window {
+        if let Some(_window) = window {
             use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
 
             let (ow, oh) = (self.output_size.0 as i32, self.output_size.1 as i32);
