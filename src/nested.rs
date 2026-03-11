@@ -1310,7 +1310,14 @@ fn process_electron_message(
                                     .unwrap_or(0) as i32;
                                 // comraw reports the MacWindow origin (title bar top);
                                 // the Wayland surface sits th pixels below that.
-                                state.space.map_element(window, (x, y + th), false);
+                                let prev_loc = state.space.element_location(&window).unwrap_or_default();
+                                state.space.map_element(window.clone(), (x, y + th), false);
+                                state.translate_dialog_children(
+                                    &window,
+                                    x - prev_loc.x,
+                                    y + th - prev_loc.y,
+                                );
+                                state.metadata_dirty = true;
                             }
                             "resize" => {
                                 let new_w = payload_json

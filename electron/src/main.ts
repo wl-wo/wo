@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { createConnection, createServer, Socket, Server } from 'net';
 import { fileURLToPath } from 'url';
 import { dirname, resolve as resolvePath, join as joinPath } from 'path';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import { createRequire } from 'module';
 import { MAGIC, stringToBuffer } from './protocol.js';
@@ -44,18 +45,25 @@ function debugLog(...args: any[]) {
 debugLog('[Wo] Electron starting, NODE_VERSION=', process.version);
 
 // GPU acceleration & rendering performance flags (must be set before app 'ready')
-// Note: core flags (--in-process-gpu, --use-gl=egl, --ozone-platform=wayland)
-// are set on the command line in the Rust spawn().  Flags below augment those.
+// Chromium flags MUST go through appendSwitch — process argv flags are not
+// reliably forwarded by Electron to Chromium's command-line parser.
+app.commandLine.appendSwitch('use-gl', 'angle');
+app.commandLine.appendSwitch('use-angle', 'vulkan');
+app.commandLine.appendSwitch('ozone-platform', 'wayland');
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('enable-features',
-  'CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder,SharedArrayBuffer,RawDraw');
+  'CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder,SharedArrayBuffer,RawDraw,DefaultANGLEVulkan,VulkanFromANGLE');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('disable-frame-rate-limit');
 app.commandLine.appendSwitch('disable-gpu-vsync');
+app.commandLine.appendSwitch('num-raster-threads', '4');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 debugLog('[Wo] GPU acceleration flags applied');
 
 type ClientWindowInfo = {
@@ -84,8 +92,8 @@ let ipcSocket: Socket | null = null;
 let portalUiServer: Server | null = null;
 type PendingPortalRequest = {
   socket: Socket;
-  kind: 'screen_share';
-  sessionId: string;
+  requestId: string;
+  payload: any;
 };
 const portalPendingRequests = new Map<string, PendingPortalRequest>();
 const PORTAL_UI_SOCKET = '/tmp/wo-portal-ui.sock';
@@ -202,7 +210,7 @@ function getOrCreateSab(windowName: string, width: number, height: number, strid
   surfaceSabCache.set(windowName, entry);
   // Tell renderer about the new SAB so it can reference it
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.postMessage('wo:surface-sab', {
+    mainWindow.webContents.send('wo:surface-sab', {
       name: windowName,
       sab,
       width,
@@ -231,7 +239,8 @@ let pointerX = 0;
 let pointerY = 0;
 
 function respondToPortalRequest(requestId: string, params: {
-  allowed: boolean;
+  response?: unknown;
+  allowed?: boolean;
   type?: string;
   windowName?: unknown;
 }): { ok: boolean; error?: string } {
@@ -240,19 +249,22 @@ function respondToPortalRequest(requestId: string, params: {
     return { ok: false, error: `No pending portal request: ${requestId}` };
   }
 
-  let response: Record<string, unknown>;
-  if (pending.kind === 'screen_share') {
-    response = {
-      allowed: Boolean(params.allowed),
-      sourceType: params.type === 'window' ? 'Window' : 'Monitor',
-      windowName: typeof params.windowName === 'string' ? params.windowName : null,
-    };
-  } else {
-    response = { allowed: false };
+  const responsePayload =
+    params.response !== undefined
+      ? params.response
+      : {
+          allowed: Boolean(params.allowed),
+          sourceType: params.type === 'window' ? 'Window' : 'Monitor',
+          windowName: typeof params.windowName === 'string' ? params.windowName : null,
+        };
+
+  if (responsePayload === undefined) {
+    portalPendingRequests.delete(requestId);
+    return { ok: false, error: 'Missing portal response payload' };
   }
 
   try {
-    pending.socket.write(`${JSON.stringify(response)}\n`);
+    pending.socket.write(`${JSON.stringify(responsePayload)}\n`);
     pending.socket.end();
     portalPendingRequests.delete(requestId);
     return { ok: true };
@@ -276,64 +288,59 @@ function startPortalUiBridge() {
 
     socket.on('data', (chunk: Buffer) => {
       received += chunk.toString('utf8');
-      const nl = received.indexOf('\n');
-      if (nl < 0) return;
+      let nl = received.indexOf('\n');
+      while (nl >= 0) {
+        const line = received.slice(0, nl).trim();
+        received = received.slice(nl + 1);
 
-      const line = received.slice(0, nl).trim();
-      received = received.slice(nl + 1);
-      if (!line) return;
+        if (line.length > 0) {
+          try {
+            const req = JSON.parse(line) as Record<string, unknown>;
+            const requestId = String(
+              (req?.requestId as string | undefined)
+              ?? (req?.sessionId as string | undefined)
+              ?? (req?.id as string | undefined)
+              ?? randomUUID(),
+            );
 
-      try {
-        const req = JSON.parse(line) as {
-          type?: string;
-          appName?: string;
-          sessionId?: string;
-        };
+            portalPendingRequests.set(requestId, { socket, requestId, payload: req });
 
-        if (req.type !== 'screen_share_request' || !req.sessionId) {
-          socket.end('{"allowed":false,"reason":"invalid_request"}\n');
-          return;
-        }
+            // Auto-timeout if UI does not respond within 90s
+            socket.setTimeout(90_000, () => {
+              const pending = portalPendingRequests.get(requestId);
+              if (pending) {
+                portalPendingRequests.delete(requestId);
+                pending.socket.end(JSON.stringify({ error: 'timeout', requestId }) + '\n');
+              }
+            });
 
-        const requestId = req.sessionId;
-
-        portalPendingRequests.set(requestId, {
-          socket,
-          kind: 'screen_share',
-          sessionId: req.sessionId,
-        });
-
-        // Auto-deny if UI does not respond within 90s
-        socket.setTimeout(90_000, () => {
-          const pending = portalPendingRequests.get(requestId);
-          if (pending) {
-            portalPendingRequests.delete(requestId);
-            pending.socket.end('{"allowed":false,"reason":"timeout"}\n');
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('wo:portal-request', {
+                requestId,
+                payload: req,
+                kind: typeof req?.type === 'string'
+                  ? (req.type as string)
+                  : typeof req?.kind === 'string'
+                  ? (req.kind as string)
+                  : undefined,
+              });
+            } else {
+              portalPendingRequests.delete(requestId);
+              socket.end(JSON.stringify({ error: 'no_ui', requestId }) + '\n');
+            }
+          } catch {
+            socket.end('{"error":"invalid_json"}\n');
           }
-        });
-
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          const payload = {
-            requestId,
-            kind: 'screen_share',
-            appName: req.appName || 'Application',
-            sessionId: req.sessionId,
-          };
-
-          mainWindow.webContents.send('wo:portal-request', payload);
-        } else {
-          portalPendingRequests.delete(requestId);
-          socket.end('{"allowed":false,"reason":"no_ui"}\n');
         }
-      } catch {
-        socket.end('{"allowed":false,"reason":"invalid_json"}\n');
+
+        nl = received.indexOf('\n');
       }
     });
 
     socket.on('close', () => {
-      for (const [sessionId, pending] of portalPendingRequests.entries()) {
+      for (const [requestId, pending] of portalPendingRequests.entries()) {
         if (pending.socket === socket) {
-          portalPendingRequests.delete(sessionId);
+          portalPendingRequests.delete(requestId);
           break;
         }
       }
@@ -356,7 +363,7 @@ function startPortalUiBridge() {
 function stopPortalUiBridge() {
   for (const pending of portalPendingRequests.values()) {
     try {
-      pending.socket.end('{"allowed":false,"reason":"shutdown"}\n');
+      pending.socket.end(JSON.stringify({ error: 'shutdown', requestId: pending.requestId }) + '\n');
     } catch {
       // ignore
     }
@@ -402,321 +409,22 @@ let clientWindows: ClientWindowInfo[] = parseClientWindows();
 // Live window list received from the compositor via WOWM metadata messages.
 let compositorWindows: Record<string, unknown>[] = [];
 
-type StatusNotifierTrayItem = {
-  id: string;
-  title: string;
-  status: 'active' | 'passive' | 'attention';
-  icon: string;
-  iconDataUrl?: string;
-  service: string;
-  objectPath: string;
-  menuPath?: string;
-  hasMenu: boolean;
-};
-
-function parseQuotedStrings(output: string): string[] {
-  const matches = output.matchAll(/"((?:[^"\\]|\\.)*)"/g);
-  const values: string[] = [];
-  for (const match of matches) {
-    const raw = match[1];
-    values.push(raw.replace(/\\"/g, '"').replace(/\\\\/g, '\\'));
-  }
-  return values;
-}
-
-function runBusctlUser(args: string[]): string {
+type DbBus = 'user' | 'system';
+function runBusctl(bus: DbBus, args: string[]): { ok: boolean; stdout: string; stderr: string; exitCode: number } {
   try {
-    const { execFileSync } = require('child_process') as typeof import('child_process');
-    return execFileSync('busctl', ['--user', ...args], {
+    const { spawnSync } = require('child_process') as typeof import('child_process');
+    const res = spawnSync('busctl', [bus === 'system' ? '--system' : '--user', ...args], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return '';
-  }
-}
-
-function parseServiceAndPath(itemRef: string): { service: string; objectPath: string } | null {
-  const slashIdx = itemRef.indexOf('/');
-  if (slashIdx > 0) {
-    return {
-      service: itemRef.slice(0, slashIdx),
-      objectPath: itemRef.slice(slashIdx),
-    };
-  }
-
-  if (!itemRef) {
-    return null;
-  }
-
-  return {
-    service: itemRef,
-    objectPath: '/StatusNotifierItem',
-  };
-}
-
-function parseBusctlStringValue(output: string): string {
-  const quoted = parseQuotedStrings(output);
-  if (quoted.length > 0) {
-    return quoted[0];
-  }
-  const parts = output.split(/\s+/);
-  return parts.length >= 2 ? parts.slice(1).join(' ').trim() : '';
-}
-
-function getBusProperty(service: string, objectPath: string, iface: string, prop: string): string {
-  const out = runBusctlUser(['get-property', service, objectPath, iface, prop]);
-  return out ? parseBusctlStringValue(out) : '';
-}
-
-function mapTrayIcon(iconName: string, title: string): string {
-  const n = iconName.toLowerCase();
-  const t = title.toLowerCase();
-  if (n.includes('network') || t.includes('network') || t.includes('wifi')) return 'mdi:wifi';
-  if (n.includes('audio') || n.includes('volume') || t.includes('volume')) return 'mdi:volume-high';
-  if (n.includes('battery') || t.includes('battery')) return 'mdi:battery';
-  if (n.includes('bluetooth') || t.includes('bluetooth')) return 'mdi:bluetooth';
-  if (n.includes('telegram') || t.includes('telegram')) return 'mdi:telegram';
-  if (n.includes('discord') || t.includes('discord')) return 'mdi:discord';
-  if (n.includes('steam') || t.includes('steam')) return 'mdi:steam';
-  if (n.includes('dropbox') || t.includes('dropbox')) return 'mdi:dropbox';
-  if (n.includes('mail') || t.includes('mail')) return 'mdi:email-outline';
-  if (n.includes('kde') || t.includes('kde')) return 'mdi:kde';
-  return 'mdi:circle-medium';
-}
-
-function iconPathCandidates(iconName: string): string[] {
-  const direct = iconName.startsWith('/') ? [iconName] : [];
-  if (iconName.startsWith('/')) {
-    return direct;
-  }
-
-  const exts = ['png', 'svg'];
-  const bases = [
-    '/usr/share/pixmaps',
-    '/usr/share/icons/hicolor/16x16/apps',
-    '/usr/share/icons/hicolor/22x22/apps',
-    '/usr/share/icons/hicolor/24x24/apps',
-    '/usr/share/icons/hicolor/32x32/apps',
-    '/usr/share/icons/hicolor/48x48/apps',
-    '/usr/share/icons/hicolor/scalable/apps',
-    '/usr/share/icons/breeze/apps/22',
-    '/usr/share/icons/breeze/apps/24',
-    '/usr/share/icons/breeze/apps/32',
-  ];
-
-  const results: string[] = [];
-  for (const base of bases) {
-    for (const ext of exts) {
-      results.push(`${base}/${iconName}.${ext}`);
-    }
-  }
-  return results;
-}
-
-function toDataUrlForIconFile(iconPath: string): string | undefined {
-  try {
-    if (!fs.existsSync(iconPath)) {
-      return undefined;
-    }
-    const lower = iconPath.toLowerCase();
-    const mime = lower.endsWith('.svg') ? 'image/svg+xml' : lower.endsWith('.png') ? 'image/png' : '';
-    if (!mime) {
-      return undefined;
-    }
-    const base64 = fs.readFileSync(iconPath).toString('base64');
-    return `data:${mime};base64,${base64}`;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveTrayIconDataUrl(iconName: string): string | undefined {
-  for (const candidate of iconPathCandidates(iconName)) {
-    const dataUrl = toDataUrlForIconFile(candidate);
-    if (dataUrl) {
-      return dataUrl;
-    }
-  }
-  return undefined;
-}
-
-function getStatusNotifierTrayItems(): StatusNotifierTrayItem[] {
-  const watcherCall = runBusctlUser([
-    'call',
-    'org.kde.StatusNotifierWatcher',
-    '/StatusNotifierWatcher',
-    'org.kde.StatusNotifierWatcher',
-    'RegisteredStatusNotifierItems',
-  ]);
-
-  if (!watcherCall) {
-    return [];
-  }
-
-  const refs = parseQuotedStrings(watcherCall);
-  const results: StatusNotifierTrayItem[] = [];
-
-  for (const itemRef of refs) {
-    const parsed = parseServiceAndPath(itemRef);
-    if (!parsed) {
-      continue;
-    }
-
-    const statusRaw = getBusProperty(parsed.service, parsed.objectPath, 'org.kde.StatusNotifierItem', 'Status');
-    const title =
-      getBusProperty(parsed.service, parsed.objectPath, 'org.kde.StatusNotifierItem', 'Title')
-      || getBusProperty(parsed.service, parsed.objectPath, 'org.kde.StatusNotifierItem', 'Id')
-      || parsed.service;
-    const iconName =
-      getBusProperty(parsed.service, parsed.objectPath, 'org.kde.StatusNotifierItem', 'AttentionIconName')
-      || getBusProperty(parsed.service, parsed.objectPath, 'org.kde.StatusNotifierItem', 'IconName');
-    const menuPath = getBusProperty(parsed.service, parsed.objectPath, 'org.kde.StatusNotifierItem', 'Menu');
-    const iconDataUrl = iconName ? resolveTrayIconDataUrl(iconName) : undefined;
-
-    let status: StatusNotifierTrayItem['status'] = 'active';
-    const s = statusRaw.toLowerCase();
-    if (s.includes('passive')) {
-      status = 'passive';
-    } else if (s.includes('attention') || s.includes('needsattention')) {
-      status = 'attention';
-    }
-
-    results.push({
-      id: `${parsed.service}${parsed.objectPath}`,
-      title,
-      status,
-      icon: mapTrayIcon(iconName || title, title),
-      iconDataUrl,
-      service: parsed.service,
-      objectPath: parsed.objectPath,
-      menuPath: menuPath || undefined,
-      hasMenu: Boolean(menuPath && menuPath !== '/NO_DBUSMENU'),
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-  }
-
-  return results;
-}
-
-function activateStatusNotifierItem(service: string, objectPath: string): boolean {
-  const out = runBusctlUser([
-    'call',
-    service,
-    objectPath,
-    'org.kde.StatusNotifierItem',
-    'Activate',
-    'ii',
-    '0',
-    '0',
-  ]);
-  return out.length > 0;
-}
-
-function secondaryActivateStatusNotifierItem(service: string, objectPath: string): boolean {
-  const out = runBusctlUser([
-    'call',
-    service,
-    objectPath,
-    'org.kde.StatusNotifierItem',
-    'SecondaryActivate',
-    'ii',
-    '0',
-    '0',
-  ]);
-  return out.length > 0;
-}
-
-function openStatusNotifierContextMenu(service: string, objectPath: string, x: number, y: number): boolean {
-  const out = runBusctlUser([
-    'call',
-    service,
-    objectPath,
-    'org.kde.StatusNotifierItem',
-    'ContextMenu',
-    'ii',
-    String(Math.trunc(x)),
-    String(Math.trunc(y)),
-  ]);
-  return out.length > 0;
-}
-
-type DBusMenuItem = {
-  id: string;
-  label: string;
-  enabled: boolean;
-  children?: DBusMenuItem[];
-};
-
-function getDBusMenuLayout(service: string, menuPath: string): DBusMenuItem[] {
-  try {
-    const out = runBusctlUser([
-      'call',
-      service,
-      menuPath.startsWith('/') ? menuPath : '/com/canonical/dbusmenu',
-      'com.canonical.dbusmenu',
-      'GetLayout',
-      'u',
-      '0',
-    ]);
-
-    if (!out) {
-      return [];
-    }
-
-    const lines = out.split('\n').filter(l => l.trim().length > 0);
-    const items: DBusMenuItem[] = [];
-    let depth = 0;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      const newDepth = (line.match(/^\s*/)?.[0]?.length ?? 0) / 2;
-      
-      if (trimmed.startsWith('(') && trimmed.includes('"')) {
-        const quoted = parseQuotedStrings(trimmed);
-        if (quoted.length > 0) {
-          const label = quoted[0];
-          const item: DBusMenuItem = {
-            id: label,
-            label,
-            enabled: !line.toLowerCase().includes('disabled'),
-          };
-
-          if (newDepth === 0) {
-            items.push(item);
-          } else if (items.length > 0 && newDepth > depth) {
-            const parent = items[items.length - 1];
-            if (!parent.children) {
-              parent.children = [];
-            }
-            parent.children.push(item);
-          }
-        }
-        depth = newDepth;
-      }
-    }
-
-    return items;
-  } catch {
-    return [];
-  }
-}
-
-function triggerDBusMenuEvent(service: string, menuPath: string, menuId: string): boolean {
-  try {
-    const out = runBusctlUser([
-      'call',
-      service,
-      menuPath.startsWith('/') ? menuPath : '/com/canonical/dbusmenu',
-      'com.canonical.dbusmenu',
-      'Event',
-      'sis',
-      menuId,
-      'clicked',
-      '',
-    ]);
-    return out.length > 0;
-  } catch {
-    return false;
+    return {
+      ok: res.status === 0,
+      stdout: (res.stdout as string | undefined)?.trim?.() || '',
+      stderr: (res.stderr as string | undefined)?.trim?.() || '',
+      exitCode: res.status ?? -1,
+    };
+  } catch (error: any) {
+    return { ok: false, stdout: '', stderr: String(error), exitCode: -1 };
   }
 }
 
@@ -1263,17 +971,56 @@ function connectToCompositor(): Promise<void> {
           const dmabufFormat = compositorRxBuffer.readUInt32LE(off); off += 4;
           const numPlanes = compositorRxBuffer.readUInt32LE(off); off += 4;
 
-          const totalSize = (off - rxReadOffset) + (numPlanes * 24);
+          const planeSectionSize = numPlanes * 24;
+          const totalSize = (off - rxReadOffset) + planeSectionSize;
           if (rxAvailable() < totalSize) break;
+
+          const planes: Array<{ offset: bigint; stride: number; modifier: bigint }> = [];
+          let planeOff = off;
+          for (let i = 0; i < numPlanes; i++) {
+            planeOff += 4; // fd placeholder
+            const planeOffset = compositorRxBuffer.readBigUInt64LE(planeOff); planeOff += 8;
+            const planeStride = compositorRxBuffer.readUInt32LE(planeOff); planeOff += 4;
+            const modifier = compositorRxBuffer.readBigUInt64LE(planeOff); planeOff += 8;
+            planes.push({ offset: planeOffset, stride: planeStride, modifier });
+          }
 
           try {
             if (nativeDmabuf && ipcSocket) {
               const socketFd = (ipcSocket as any)?._handle?.fd;
               if (typeof socketFd === 'number' && socketFd >= 0) {
-                const dmabufFd = nativeDmabuf.recvFd(socketFd);
-                if (dmabufFd >= 0) {
+                const planeFds: number[] = [];
+                for (let i = 0; i < numPlanes; i++) {
+                  const fd = nativeDmabuf.recvFd(socketFd);
+                  if (fd >= 0) planeFds.push(fd);
+                }
+
+                const primaryFd = planeFds.find((fd) => fd >= 0);
+                const primaryPlane = planes[0];
+                const stride = primaryPlane?.stride || dmabufW * 4;
+                const offset = primaryPlane ? Number(primaryPlane.offset) : 0;
+
+                if (primaryFd !== undefined) {
                   try {
-                    const textureInfo = nativeDmabuf.importDmabufTexture(dmabufName, dmabufFd, dmabufW, dmabufH, dmabufFormat);
+                    // Map DMABUF into SAB so renderer can reuse existing surface path
+                    const sabEntry = getOrCreateSab(dmabufName, dmabufW, dmabufH, stride);
+                    const copySize = offset + stride * dmabufH;
+                    nativeDmabuf.copyMmapToSab(primaryFd, sabEntry.sab, copySize, offset);
+
+                    surfaceUpdatePending.set(dmabufName, {
+                      name: dmabufName,
+                      width: dmabufW,
+                      height: dmabufH,
+                      stride,
+                      generation: ++surfaceUpdateGeneration,
+                    });
+                    if (!surfaceUpdateFlushScheduled) {
+                      surfaceUpdateFlushScheduled = true;
+                      setImmediate(flushSurfaceUpdates);
+                    }
+
+                    // Preserve existing DMABUF texture notification for any consumers
+                    const textureInfo = nativeDmabuf.importDmabufTexture(dmabufName, primaryFd, dmabufW, dmabufH, dmabufFormat);
                     if (mainWindow && !mainWindow.isDestroyed()) {
                       mainWindow.webContents.send('wo:dmabuf-frame', {
                         name: dmabufName,
@@ -1283,7 +1030,9 @@ function connectToCompositor(): Promise<void> {
                       });
                     }
                   } finally {
-                    fs.closeSync(dmabufFd);
+                    for (const fd of planeFds) {
+                      try { fs.closeSync(fd); } catch { /* ignore */ }
+                    }
                   }
                 }
               }
@@ -1701,64 +1450,8 @@ function setupIpcHandlers() {
               timestamp: Date.now(),
             });
           }
-          return { ok: true };
-        }
-
-        case 'tray_list': {
-          return getStatusNotifierTrayItems();
-        }
-
-        case 'tray_activate': {
-          const service = String(params.service || '');
-          const objectPath = String(params.objectPath || '');
-          if (!service || !objectPath) {
-            return { ok: false, error: 'Missing service or objectPath' };
+            return { ok: true };
           }
-          const ok = activateStatusNotifierItem(service, objectPath);
-          return ok ? { ok: true } : { ok: false, error: 'Activation failed' };
-        }
-
-        case 'tray_secondary_activate': {
-          const service = String(params.service || '');
-          const objectPath = String(params.objectPath || '');
-          if (!service || !objectPath) {
-            return { ok: false, error: 'Missing service or objectPath' };
-          }
-          const ok = secondaryActivateStatusNotifierItem(service, objectPath);
-          return ok ? { ok: true } : { ok: false, error: 'Secondary activation failed' };
-        }
-
-        case 'tray_context_menu': {
-          const service = String(params.service || '');
-          const objectPath = String(params.objectPath || '');
-          const x = Number(params.x ?? 0);
-          const y = Number(params.y ?? 0);
-          if (!service || !objectPath) {
-            return { ok: false, error: 'Missing service or objectPath' };
-          }
-          const ok = openStatusNotifierContextMenu(service, objectPath, x, y);
-          return ok ? { ok: true } : { ok: false, error: 'Context menu failed' };
-        }
-
-        case 'tray_menu_items': {
-          const service = String(params.service || '');
-          const menuPath = String(params.menuPath || '');
-          if (!service || !menuPath) {
-            return [];
-          }
-          return getDBusMenuLayout(service, menuPath);
-        }
-
-        case 'tray_menu_event': {
-          const service = String(params.service || '');
-          const menuPath = String(params.menuPath || '');
-          const menuId = String(params.menuId || '');
-          if (!service || !menuPath || !menuId) {
-            return { ok: false, error: 'Missing parameters' };
-          }
-          const ok = triggerDBusMenuEvent(service, menuPath, menuId);
-          return ok ? { ok: true } : { ok: false, error: 'Menu event failed' };
-        }
 
         case 'portal_respond': {
           const requestId = String(params.requestId || '');
@@ -1766,10 +1459,63 @@ function setupIpcHandlers() {
             return { ok: false, error: 'Missing portal requestId' };
           }
           return respondToPortalRequest(requestId, {
-            allowed: Boolean(params.allowed),
+            response: params.response,
+            allowed: params.allowed,
             type: typeof params.type === 'string' ? params.type : undefined,
             windowName: params.windowName,
           });
+        }
+
+        case 'dbus_call': {
+          const bus: DbBus = params.bus === 'system' ? 'system' : 'user';
+          const service = String(params.service || '');
+          const objectPath = String(params.objectPath || '');
+          const iface = String(params.interface || params.iface || '');
+          const method = String(params.method || '');
+          const signature = typeof params.signature === 'string' ? params.signature : '';
+          const argList: any[] = Array.isArray(params.args) ? params.args : [];
+          if (!service || !objectPath || !iface || !method) {
+            return { ok: false, error: 'Missing dbus parameters' };
+          }
+          const args = ['call', service, objectPath, iface, method, signature || ''];
+          if (signature) {
+            args.push(...argList.map((v) => String(v)));
+          }
+          const result = runBusctl(bus, args);
+          return result;
+        }
+
+        case 'dbus_get_property': {
+          const bus: DbBus = params.bus === 'system' ? 'system' : 'user';
+          const service = String(params.service || '');
+          const objectPath = String(params.objectPath || '');
+          const iface = String(params.interface || params.iface || '');
+          const prop = String(params.property || params.prop || '');
+          if (!service || !objectPath || !iface || !prop) {
+            return { ok: false, error: 'Missing dbus parameters' };
+          }
+          const result = runBusctl(bus, ['get-property', service, objectPath, iface, prop]);
+          return result;
+        }
+
+        case 'load_local_file': {
+          const filePath = String(params.path || '');
+          if (!filePath) {
+            return { ok: false, error: 'Missing path' };
+          }
+          if (!fs.existsSync(filePath)) {
+            return { ok: false, error: `Path does not exist: ${filePath}` };
+          }
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            return { ok: false, error: 'Main window unavailable' };
+          }
+          try {
+            debugLog('[Wo] Loading local file:', filePath);
+            await mainWindow.loadFile(filePath);
+            return { ok: true };
+          } catch (error) {
+            return { ok: false, error: String(error) };
+          }
         }
 
         default:
@@ -1830,11 +1576,15 @@ async function createWindow() {
     }
 
     // In offscreen mode, we need actual content to trigger paint events
-    // Load the configured URL or fallback to minimal page
-    debugLog('[Wo] Loading content URL: ' + (url || 'minimal fallback'));
+    // Load the configured URL/file or fallback to minimal page
+    debugLog('[Wo] Loading content URL: ' + (url || html || 'minimal fallback'));
     try {
-      const pageUrl = url || 'data:text/html,<!DOCTYPE html><html><head><style>body{background:white;margin:0;}</style></head><body></body></html>';
-      const loadPromise = mainWindow!.loadURL(pageUrl);
+      const pageUrl = url
+        || (html ? `file://${html}` : null)
+        || 'data:text/html,<!DOCTYPE html><html><head><style>body{background:white;margin:0;}</style></head><body></body></html>';
+      const loadPromise = pageUrl.startsWith('file://')
+        ? mainWindow!.loadURL(pageUrl)
+        : mainWindow!.loadURL(pageUrl);
       // Give it time to load but don't wait forever
       await Promise.race([
         loadPromise,

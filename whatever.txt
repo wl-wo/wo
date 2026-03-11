@@ -1,337 +1,7 @@
-warning: unused import: `Buffer as BufferCoord`
-  --> src/cursor.rs:10:22
-   |
-10 | use smithay::utils::{Buffer as BufferCoord, Size};
-   |                      ^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-warning: unused import: `std::os::unix::io::AsRawFd`
-  --> src/dmabuf.rs:51:13
-   |
-51 |warning: unused import: `Buffer as BufferCoord`
-  --> src/cursor.rs:10:22
-   |
-10 | use smithay::utils::{Buffer as BufferCoord, Size};
-   |                      ^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-warning: unused import: `std::os::unix::io::AsRawFd`
-  --> src/dmabuf.rs:51:13
-   |
-51 |         use std::os::unix::io::AsRawFd;
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `smithay::utils::Rectangle`
-   --> src/dmabuf.rs:280:9
-    |
-280 |     use smithay::utils::Rectangle;
-    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `std::collections::HashMap`
- --> src/handlers/screencopy.rs:6:5
-  |
-6 | use std::collections::HashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `wl_output::WlOutput`
-  --> src/handlers/screencopy.rs:15:37
-   |
-15 |     protocol::{wl_buffer::WlBuffer, wl_output::WlOutput, wl_shm},
-   |                                     ^^^^^^^^^^^^^^^^^^^
-
-         use std::os::unix::io::AsRawFd;
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `smithay::utils::Rectangle`
-   --> src/dmabuf.rs:280:9
-    |
-280 |     use smithay::utils::Rectangle;
-    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `std::collections::HashMap`
- --> src/handlers/screencopy.rs:6:5
-  |
-6 | use std::collections::HashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `wl_output::WlOutput`
-  --> src/handlers/screencopy.rs:15:37
-   |
-15 |     protocol::{wl_buffer::WlBuffer, wl_output::WlOutput, wl_shm},
-   |                                     ^^^^^^^^^^^^^^^^^^^
-
-warning: use of deprecated associated function `smithay::desktop::Window::new`
-  --> src/handlers/xdg_shell.rs:53:30
-   |
-53 |         let window = Window::new(surface);
-   |                              ^^^
-   |
-   = notewarning: use of deprecated associated function `smithay::desktop::Window::new`
-  --> src/handlers/xdg_shell.rs:53:30
-   |
-53 |         let window = Window::new(surface);
-   |                              ^^^
-   |
-   = note: `#[warn(deprecated)]` on by default
-
-: `#[warn(deprecated)]` on by default
-
-warning: use of deprecated associated function `smithay::utils::Rectangle::<N, Kind>::from_loc_and_size`: use new or from_size
-   --> src/handlers/xwayland.rs:258:58
-    |
-258 |warning: use of deprecated associated function `smithay::utils::Rectangle::<N, Kind>::from_loc_and_size`: use new or from_size
-   --> src/handlers/xwayland.rs:258:58
-    |
-258 |         if let Err(e) = window.configure(Some(Rectangle::from_loc_and_size((0, y_offset), (ow, content_h)))) {
-    |                                                          ^^^^^^^^^^^^^^^^^
-
-         if let Err(e) = window.configure(Some(Rectangle::from_loc_and_size((0, y_offset), (ow, content_h)))) {
-    |                                                          ^^^^^^^^^^^^^^^^^
-
-warning: use of deprecated associated function `smithay::utils::Rectangle::<N, Kind>::from_loc_and_size`: use new or from_size
-   --> src/handlers/xwayland.rs:303:58
-    |
-303 |         if let Err(e) = window.configure(Some(Rectangle::from_loc_and_size((0, 0), (suggest_w, suggest_h)))) {
-    |                                                          ^^^^^^^^^^^^^^^^^
-
-warning: variable `plane_idx` is assigned to, but never used
-   --> src/electron.rs:332:13
-    |
-332 |         let mut plane_idx = 0;
-    |             ^^^^^^^^^^^^^
-    |
-    warning: use of deprecated associated function `smithay::utils::Rectangle::<N, Kind>::from_loc_and_size`: use new or from_size
-   --> src/handlers/xwayland.rs:303:58
-    |
-303 |         if let Err(e) = window.configure(Some(Rectangle::from_loc_and_size((0, 0), (suggest_w, suggest_h)))) {
-    |                                                          ^^^^^^^^^^^^^^^^^
-
-warning: variable `plane_idx` is assigned to, but never used
-   --> src/electron.rs:332:13
-    |
-332 |         let mut plane_idx = 0;
-    |             ^^^^^^^^^^^^^
-    |
-    = note: consider using `_plane_idx` instead
-    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
-
-= note: consider using `_plane_idx` instead
-    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
-
-warning: value assigned to `plane_idx` is never read
-   --> src/electron.rs:348:13
-    |
-348 |             plane_idx += 1;
-    |             ^^^^^^^^^^^^^^
-    |
-    = help: maybe it is overwritten before being read?
-    = notewarning: value assigned to `plane_idx` is never read
-   --> src/electron.rs:348:13
-    |
-348 |             plane_idx += 1;
-    |             ^^^^^^^^^^^^^^
-    |
-    = help: maybe it is overwritten before being read?
-    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
-
-: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
-
-warning: unreachable pattern
-    --> src/electron.rs:1259:46
-     |
-1259 |             Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => Ok(()),
-     |             ------------------------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
-     |             warning: unreachable pattern
-    --> src/electron.rs:1259:46
-     |
-1259 |             Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => Ok(()),
-     |             ------------------------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
-     |             |
-     |             matches all the relevant values
-     |
-     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
-
-|
-     |             matches all the relevant values
-     |
-     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
-
-warning: unreachable pattern
-    --> src/electron.rs:1286:42
-     |
-1286 |         Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => Ok(()),
-     |         ------------------------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ warning: unreachable pattern
-    --> src/electron.rs:1286:42
-     |
-1286 |         Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => Ok(()),
-     |         ------------------------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
-     |         |
-     |         matches all the relevant values
-
-no value can reach this
-     |         |
-     |         matches all the relevant values
-
-warning: unused variable: `surface_loc`
-   --> src/handlers/input.rs:439:42
-    |
-439 |                     if let Some((window, surface_loc)) = under_surface {
-    |                                          ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_surface_loc`warning: unused variable: `surface_loc`
-   --> src/handlers/input.rs:439:42
-    |
-439 |                     if let Some((window, surface_loc)) = under_surface {
-    |                                          ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_surface_loc`
-
-
-
-warning: unused variable: `window`
-   --> src/handlers/xdg_shell.rs:249:21
-    |
-249 |         if let Some(window) = window {
-    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_window`
-
-warning: unused variable: `window`
-   --> src/handlers/xdg_shell.rs:249:21
-    |
-249 |         if let Some(window) = window {
-    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_window`
-
-warning: unused variable: `event`
-   --> src/state.rs:615:9
-    |
-615 |         event: &smithay::backend::input::InputEvent<B>,
-    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_event`
-
-warning: unused variable: `event`
-   --> src/state.rs:615:9
-    |
-615 |         event: &smithay::backend::input::InputEvent<B>,
-    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_event`
-
-warning: `wo` (lib) generated 15 warnings (run `cargo fix --lib -p wo` to apply 8 suggestions)
-warning: `wo` (lib) generated 15 warnings (run `cargo fix --lib -p wo` to apply 8 suggestions)
-warning: unused import: `nix::sys::memfd::MFdFlags`
- --> src/nested.rs:8:5
-  |
-8warning: unused import: `nix::sys::memfd::MFdFlags`
- --> src/nested.rs:8:5
-  |
-8 | use nix::sys::memfd::MFdFlags;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
-
- | use nix::sys::memfd::MFdFlags;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `std::os::unix::io::AsRawFd`
-   --> src/main.rs:773:17
-    |
-773 warning: unused import: `std::os::unix::io::AsRawFd`
-   --> src/main.rs:773:17
-    |
-773 |             use std::os::unix::io::AsRawFd;
-    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-|             use std::os::unix::io::AsRawFd;
-    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `nix::sys::memfd::MFdFlags`
-   --> src/main.rs:774:17
-    |
-774 warning: unused import: `nix::sys::memfd::MFdFlags`
-   --> src/main.rs:774:17
-    |
-774 |             use nix::sys::memfd::MFdFlags;
-    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-|             use nix::sys::memfd::MFdFlags;
-    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `RenderElement`
-  --> src/main.rs:18:52
-   |
-18warning: unused import: `RenderElement`
-  --> src/main.rs:18:52
-   |
-18 | use smithay::backend::renderer::element::{Element, RenderElement};
-   |                                                    ^^^^^^^^^^^^^
-
- | use smithay::backend::renderer::element::{Element, RenderElement};
-   |                                                    ^^^^^^^^^^^^^
-
-warning: trait `RenderBackend` is never used
-  --> src/backend.rs:11:11
-   |
-11warning: trait `RenderBackend` is never used
-  --> src/backend.rs:11:11
-   |
-11 | pub trait RenderBackend {
-   |           ^^^^^^^^^^^^^
-   |
-   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
- | pub trait RenderBackend {
-   |           ^^^^^^^^^^^^^
-   |
-   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-warning: struct `Frame` is never constructed
-  --> src/backend.rs:39:12
-   |
-39warning: struct `Frame` is never constructed
-  --> src/backend.rs:39:12
-   |
-39 | pub struct Frame {
-   |            ^^^^^
-
- | pub struct Frame {
-   |            ^^^^^
-
-warning: associated function `new` is never used
-  --> src/backend.rs:45:12
-   |
-44 warning: associated function `new` is never used
-  --> src/backend.rs:45:12
-   |
-44 | impl Frame {
-   | ---------- associated function in this implementation
-45 |     pub fn new(output_rect: Rectangle<i32, Physical>) -> Self {
-   |            ^^^
-
-| impl Frame {
-   | ---------- associated function in this implementation
-45 |     pub fn new(output_rect: Rectangle<i32, Physical>) -> Self {
-   |            ^^^
-
-warning: function `reimport_cached_frame` is never used
-   --> src/dmabuf.rs:212:8
-    |
-212 warning: function `reimport_cached_frame` is never used
-   --> src/dmabuf.rs:212:8
-    |
-212 | pub fn reimport_cached_frame(
-    |        ^^^^^^^^^^^^^^^^^^^^^
-
-| pub fn reimport_cached_frame(
-    |        ^^^^^^^^^^^^^^^^^^^^^
-
-warning: struct `PlaneInfoWire` is never constructed
-  --> src/electron.rs:57:12
-   |
-warning: struct `PlaneInfoWire` is never constructed
-  --> src/electron.rs:57:12
-   |
-57 | pub struct PlaneInfoWire {
-   |            ^^^^^^^^^^^^^
-
-57 | pub struct PlaneInfoWire {
-   |            ^^^^^^^^^^^^^
-
-warning: `wo` (bin "wo") generated 24 warnings (15 duplicates) (run `cargo fix --bin "wo" -p wo` to apply 3 suggestions)
-warning: `wo` (bin "wo") generated 24 warnings (15 duplicates) (run `cargo fix --bin "wo" -p wo` to apply 3 suggestions)
-    Finished `release` profile [optimized] target(s) in 0.20s
-    Finished `release` profile [optimized] target(s) in 0.20s
+   Compiling wo v0.1.0 (/home/hellings/Documents/wo)
+   Compiling wo v0.1.0 (/home/hellings/Documents/wo)
+    Finished `release` profile [optimized] target(s) in 2m 21s
+    Finished `release` profile [optimized] target(s) in 2m 21s
      Running `target/release/wo`
      Running `target/release/wo`
 Xwayland glamor: GBM Wayland interfaces not available
@@ -374,73 +44,179 @@ The XKEYBOARD keymap compiler (xkbcomp) reports:
 >                   Using 0, ignoring 0
 Errors from xkbcomp are not fatal to the X server
 Errors from xkbcomp are not fatal to the X server
-[75913:0310/190621.144695:ERROR:ui/gl/init/gl_factory.cc:102] Requested GL implementation (gl=none,angle=none) not found in allowed implementations: [(gl=egl-angle,angle=default)].
-[75913:0310/190621.144695:ERROR:ui/gl/init/gl_factory.cc:102] Requested GL implementation (gl=none,angle=none) not found in allowed implementations: [(gl=egl-angle,angle=default)].
-[75913:0310/190621.145938:ERROR:components/viz/service/main/viz_main_impl.cc:189] Exiting GPU process due to errors during initialization
-[75913:0310/190621.145938:ERROR:components/viz/service/main/viz_main_impl.cc:189] Exiting GPU process due to errors during initialization
-[75933:0310/190621.205869:ERROR:ui/gl/init/gl_factory.cc:102] Requested GL implementation (gl=none,angle=none) not found in allowed implementations: [(gl=egl-angle,angle=default)].
-[75933:0310/190621.205869:ERROR:ui/gl/init/gl_factory.cc:102] Requested GL implementation (gl=none,angle=none) not found in allowed implementations: [(gl=egl-angle,angle=default)].
-[75933:0310/190621.207105:ERROR:components/viz/service/main/viz_main_impl.cc:189] Exiting GPU process due to errors during initialization
-[75933:0310/190621.207105:ERROR:components/viz/service/main/viz_main_impl.cc:189] Exiting GPU process due to errors during initialization
-[75966:0310/190621.260351:ERROR:ui/gl/init/gl_factory.cc:102] Requested GL implementation (gl=none,angle=none) not found in allowed implementations: [(gl=egl-angle,angle=default)].
-[75966:0310/190621.260351:ERROR:ui/gl/init/gl_factory.cc:102] Requested GL implementation (gl=none,angle=none) not found in allowed implementations: [(gl=egl-angle,angle=default)].
-[75966:0310/190621.261808:ERROR:components/viz/service/main/viz_main_impl.cc:189] Exiting GPU process due to errors during initialization
-[75966:0310/190621.261808:ERROR:components/viz/service/main/viz_main_impl.cc:189] Exiting GPU process due to errors during initialization
-(node:75859) DeprecationWarning: getBitmap() is deprecated, use toBitmap() instead.
-(Use `electron --trace-deprecation ...` to show where the warning was created)
-(node:75859) DeprecationWarning: getBitmap() is deprecated, use toBitmap() instead.
-(Use `electron --trace-deprecation ...` to show where the warning was created)
-Error sending from webFrameMain:  Error: Failed to serialize arguments
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Gtk-Message: 13:58:16.908: Failed to load module "appmenu-gtk-module"
+Gtk-Message: 13:58:16.908: Failed to load module "appmenu-gtk-module"
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+[24415:0311/135817.250839:ERROR:ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc:250] '--ozone-platform=wayland' is not compatible with Vulkan. Consider switching to '--ozone-platform=x11' or disabling Vulkan
+[24415:0311/135817.250839:ERROR:ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc:250] '--ozone-platform=wayland' is not compatible with Vulkan. Consider switching to '--ozone-platform=x11' or disabling Vulkan
+[24415:0311/135817.264878:ERROR:components/viz/service/display_embedder/skia_output_device_vulkan.cc:301] Failed to create vulkan surface.
+[24415:0311/135817.264878:ERROR:components/viz/service/display_embedder/skia_output_device_vulkan.cc:301] Failed to create vulkan surface.
+[24330:0311/135939.036070:ERROR:content/browser/network_service_instance_impl.cc:613] Network service crashed, restarting service.
+[24330:0311/135939.036070:ERROR:content/browser/network_service_instance_impl.cc:613] Network service crashed, restarting service.
+[24330:0311/135939.185963:ERROR:content/browser/gpu/gpu_process_host.cc:999] GPU process exited unexpectedly: exit_code=15
+[24330:0311/135939.185963:ERROR:content/browser/gpu/gpu_process_host.cc:999] GPU process exited unexpectedly: exit_code=15
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
     at s.send (node:electron/js2c/browser_init:2:100266)
     at b.send (node:electron/js2c/browser_init:2:84687)
-    at getOrCreateSab (file:///home/hellings/Documents/wo/electron/dist/main.js:318:28)
-    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1251:30)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
     at Socket.emit (node:events:519:28)
     at addChunk (node:internal/streams/readable:561:12)
     at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
     at Readable.push (node:internal/streams/readable:392:5)
     at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
-Error sending from webFrameMain:  Error: Failed to serialize arguments
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
     at s.send (node:electron/js2c/browser_init:2:100266)
     at b.send (node:electron/js2c/browser_init:2:84687)
-    at getOrCreateSab (file:///home/hellings/Documents/wo/electron/dist/main.js:318:28)
-    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1251:30)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
     at Socket.emit (node:events:519:28)
     at addChunk (node:internal/streams/readable:561:12)
     at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
     at Readable.push (node:internal/streams/readable:392:5)
     at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
-Error sending from webFrameMain:  Error: Failed to serialize arguments
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
     at s.send (node:electron/js2c/browser_init:2:100266)
     at b.send (node:electron/js2c/browser_init:2:84687)
-    at getOrCreateSab (file:///home/hellings/Documents/wo/electron/dist/main.js:318:28)
-    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1251:30)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
     at Socket.emit (node:events:519:28)
     at addChunk (node:internal/streams/readable:561:12)
     at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
     at Readable.push (node:internal/streams/readable:392:5)
     at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
-Error sending from webFrameMain:  Error: Failed to serialize arguments
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
     at s.send (node:electron/js2c/browser_init:2:100266)
     at b.send (node:electron/js2c/browser_init:2:84687)
-    at getOrCreateSab (file:///home/hellings/Documents/wo/electron/dist/main.js:318:28)
-    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1251:30)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
     at Socket.emit (node:events:519:28)
     at addChunk (node:internal/streams/readable:561:12)
     at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
     at Readable.push (node:internal/streams/readable:392:5)
     at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
-Key repeat discarded, Wayland compositor doesn't seem to be processing events fast enough!
-Key repeat discarded, Wayland compositor doesn't seem to be processing events fast enough!
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1213:36)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+Error sending from webFrameMain:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at s.send (node:electron/js2c/browser_init:2:100266)
+    at b.send (node:electron/js2c/browser_init:2:84687)
+    at Socket.<anonymous> (file:///home/hellings/Documents/wo/electron/dist/main.js:1235:40)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
 (EE) failed to read Wayland events: Broken pipe
 (EE) failed to read Wayland events: Broken pipe
-[75859:0310/190654.025906:ERROR:mojo/public/cpp/bindings/lib/interface_endpoint_client.cc:732] Message 0 rejected by interface blink.mojom.WidgetHost
-[75859:0310/190654.025906:ERROR:mojo/public/cpp/bindings/lib/interface_endpoint_client.cc:732] Message 0 rejected by interface blink.mojom.WidgetHost
-[75859:0310/190654.035184:ERROR:mojo/public/cpp/bindings/lib/interface_endpoint_client.cc:732] Message 4 rejected by interface blink.mojom.WidgetHost
-[75859:0310/190654.035184:ERROR:mojo/public/cpp/bindings/lib/interface_endpoint_client.cc:732] Message 4 rejected by interface blink.mojom.WidgetHost
-[75859:0310/190654.058269:ERROR:mojo/public/cpp/bindings/lib/interface_endpoint_client.cc:732] Message 5 rejected by interface blink.mojom.WidgetHost
-[75859:0310/190654.058269:ERROR:mojo/public/cpp/bindings/lib/interface_endpoint_client.cc:732] Message 5 rejected by interface blink.mojom.WidgetHost
-[75859:0310/190654.068805:ERROR:content/browser/network_service_instance_impl.cc:613] Network service crashed, restarting service.
-[75859:0310/190654.068805:ERROR:content/browser/network_service_instance_impl.cc:613] Network service crashed, restarting service.
-[75859:0310/190654.077683:ERROR:content/browser/gpu/gpu_process_host.cc:999] GPU process exited unexpectedly: exit_code=15
-[75859:0310/190654.077683:ERROR:content/browser/gpu/gpu_process_host.cc:999] GPU process exited unexpectedly: exit_code=15

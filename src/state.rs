@@ -19,7 +19,7 @@ use smithay::{
         relative_pointer::RelativePointerManagerState,
         pointer_constraints::{self, PointerConstraintsHandler, PointerConstraintsState},
         keyboard_shortcuts_inhibit::{KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor},
-        shell::xdg::{XdgShellState, decoration::XdgDecorationState}, shm::ShmState, single_pixel_buffer::SinglePixelBufferState, tablet_manager::TabletSeatHandler, viewporter::ViewporterState, xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData}, xwayland_shell::XWaylandShellState
+        shell::xdg::{XdgShellState, XdgToplevelSurfaceData, decoration::XdgDecorationState}, shm::ShmState, single_pixel_buffer::SinglePixelBufferState, tablet_manager::TabletSeatHandler, viewporter::ViewporterState, xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData}, xwayland_shell::XWaylandShellState
     },
     xwayland::{XWayland, xwm::X11Wm},
 };
@@ -556,6 +556,65 @@ impl WoState {
             return self.x11_window_names.get(&x11.window_id());
         }
         None
+    }
+
+    /// Return the stable parent name (Wayland or X11) for a window, if any.
+    pub fn parent_name_for_window(&self, window: &Window) -> Option<String> {
+        if let Some(x11) = window.x11_surface() {
+            if let Some(parent_id) = x11.is_transient_for() {
+                return self.x11_window_names.get(&parent_id).cloned();
+            }
+        }
+
+        let parent_surface = window.toplevel().and_then(|t| {
+            with_states(t.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|d| d.lock().ok().and_then(|data| data.parent.clone()))
+            })
+        });
+
+        if let Some(parent_wl) = parent_surface {
+            use smithay::reexports::wayland_server::Resource;
+            return self.wayland_window_names.get(&parent_wl.id()).cloned();
+        }
+
+        None
+    }
+
+    /// Translate all dialog/transient children of `parent` by (dx, dy) to keep them anchored.
+    pub fn translate_dialog_children(&mut self, parent: &Window, dx: i32, dy: i32) {
+        if dx == 0 && dy == 0 {
+            return;
+        }
+
+        let parent_name = match self.wayland_window_name(parent) {
+            Some(name) => name.clone(),
+            None => return,
+        };
+
+        let children: Vec<_> = self
+            .all_windows
+            .iter()
+            .cloned()
+            .filter(|win| {
+                if let Some(child_parent) = self.parent_name_for_window(win) {
+                    child_parent == parent_name
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        for child in children {
+            if let Some(loc) = self.space.element_location(&child) {
+                self.space
+                    .map_element(child.clone(), (loc.x + dx, loc.y + dy), false);
+            }
+        }
+
+        self.metadata_dirty = true;
     }
 
     /// Find a Wayland or X11 Window element by its stable name (even if minimized).

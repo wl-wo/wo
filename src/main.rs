@@ -1708,6 +1708,14 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         }
     }
 
+    // Bind the Wayland listening socket BEFORE spawning Electron so that
+    // Chromium's Ozone/Wayland backend can connect immediately.  Without
+    // this, `--ozone-platform=wayland` fails with "Connection refused"
+    // because the socket is not yet accepting connections.
+    let wayland_socket =
+        ListeningSocket::bind(&config.compositor.socket_name).context("binding Wayland socket")?;
+    info!(socket = %config.compositor.socket_name, "Wayland socket bound");
+
     std::env::set_var("WAYLAND_DISPLAY", &config.compositor.socket_name);
     // Propagate now; DISPLAY will be re-propagated once XWayland is ready.
     crate::state::propagate_environment(&["WAYLAND_DISPLAY"]);
@@ -1804,10 +1812,6 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
         Duration::from_millis(16)
     };
     let last_render = std::time::Instant::now();
-
-    let wayland_socket =
-        ListeningSocket::bind(&config.compositor.socket_name).context("binding Wayland socket")?;
-    info!(socket = %config.compositor.socket_name, "Wayland socket bound");
 
     // Register the Wayland display fd with calloop so that client messages
     // (surface commits, etc.) wake the event loop.  Without this, the loop
@@ -2167,7 +2171,14 @@ fn run_drm(mut config: Config) -> Result<(), anyhow::Error> {
                                                 .and_then(|p| p.get("y"))
                                                 .and_then(|v| v.as_i64())
                                                 .unwrap_or(0) as i32;
-                                            data.state.space.map_element(window, (x, y + th), false);
+                                            let prev_loc = data.state.space.element_location(&window).unwrap_or_default();
+                                            data.state.space.map_element(window.clone(), (x, y + th), false);
+                                            data.state.translate_dialog_children(
+                                                &window,
+                                                x - prev_loc.x,
+                                                y + th - prev_loc.y,
+                                            );
+                                            data.state.metadata_dirty = true;
                                         }
                                         "resize" => {
                                             let new_w = payload_json.as_ref()

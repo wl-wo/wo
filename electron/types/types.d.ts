@@ -88,7 +88,10 @@ export interface SyscallLogoutParams { [key: string]: any; }
 export interface SyscallLockParams { [key: string]: any; }
 export interface SyscallSleepParams { [key: string]: any; }
 export interface SyscallNotifyParams { id?: string; title: string; body?: string; icon?: string; timeout?: number; [key: string]: any; }
-export interface SyscallPortalRespondParams { requestId: string; allowed: boolean; type?: string; windowName?: string | null; [key: string]: any; }
+export interface SyscallPortalRespondParams { requestId: string; response?: any; allowed?: boolean; type?: string; windowName?: string | null; [key: string]: any; }
+export interface SyscallDbusCallParams { service: string; objectPath: string; interface: string; method: string; signature?: string; args?: any[]; bus?: 'user' | 'system'; [key: string]: any; }
+export interface SyscallDbusGetPropertyParams { service: string; objectPath: string; interface: string; property: string; bus?: 'user' | 'system'; [key: string]: any; }
+export interface SyscallLoadLocalFileParams { path: string; [key: string]: any; }
 
 export interface SyscallLaunchResult { ok: boolean; pid?: number; error?: string; }
 export interface SyscallExecResult { ok: boolean; pid?: number; error?: string; }
@@ -102,12 +105,14 @@ export interface SyscallLockResult { ok: boolean; error?: string; }
 export interface SyscallSleepResult { ok: boolean; error?: string; }
 export interface SyscallNotifyResult { ok: boolean; error?: string; }
 export interface SyscallPortalRespondResult { ok: boolean; error?: string; }
+export interface SyscallDbusCallResult { ok: boolean; stdout?: string; stderr?: string; exitCode?: number; error?: string; }
+export interface SyscallDbusGetPropertyResult { ok: boolean; stdout?: string; stderr?: string; exitCode?: number; error?: string; }
+export interface SyscallLoadLocalFileResult { ok: boolean; error?: string; }
 
 export interface PortalRequestEvent {
   requestId: string;
-  kind: string;
-  appName?: string;
-  sessionId?: string;
+  payload: any;
+  kind?: string;
 }
 
 export interface ScreencopyEvent {
@@ -217,6 +222,9 @@ export interface Compositor {
   syscall(type: 'sleep', params?: SyscallSleepParams): Promise<SyscallSleepResult>;
   syscall(type: 'notify', params: SyscallNotifyParams): Promise<SyscallNotifyResult>;
   syscall(type: 'portal_respond', params: SyscallPortalRespondParams): Promise<SyscallPortalRespondResult>;
+  syscall(type: 'dbus_call', params: SyscallDbusCallParams): Promise<SyscallDbusCallResult>;
+  syscall(type: 'dbus_get_property', params: SyscallDbusGetPropertyParams): Promise<SyscallDbusGetPropertyResult>;
+  syscall(type: 'load_local_file', params: SyscallLoadLocalFileParams): Promise<SyscallLoadLocalFileResult>;
   syscall(type: string, params?: any): Promise<any>;
 
   /**

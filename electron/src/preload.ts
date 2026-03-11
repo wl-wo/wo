@@ -120,15 +120,13 @@ const compositorAPI: CompositorAPI = {
   // Generic portal request event for client-provided popup/approval handlers
   onPortalRequest: (callback: (data: {
     requestId: string;
-    kind: string;
-    appName?: string;
-    sessionId?: string;
+    payload: any;
+    kind?: string;
   }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: {
       requestId: string;
-      kind: string;
-      appName?: string;
-      sessionId?: string;
+      payload: any;
+      kind?: string;
     }) => callback(data);
     ipcRenderer.on('wo:portal-request', handler);
     return () => ipcRenderer.removeListener('wo:portal-request', handler);

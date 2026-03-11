@@ -165,7 +165,7 @@ impl WoState {
         self.pointer_location = new_pos;
 
         // Process active grab (interactive move/resize) before normal dispatch
-        if let Some(ref grab) = self.grab_state.clone() {
+        if let Some(grab) = self.grab_state.clone() {
             match grab {
                 GrabState::Move {
                     window,
@@ -178,7 +178,18 @@ impl WoState {
                         initial_window_location.x + dx as i32,
                         initial_window_location.y + dy as i32,
                     );
+
+                    let prev_loc = self
+                        .space
+                        .element_location(&window)
+                        .unwrap_or(initial_window_location);
                     self.space.map_element(window.clone(), new_loc, false);
+                    self.translate_dialog_children(
+                        &window,
+                        new_loc.0 - prev_loc.x,
+                        new_loc.1 - prev_loc.y,
+                    );
+                    self.metadata_dirty = true;
                 }
                 GrabState::Resize {
                     surface,
@@ -192,11 +203,11 @@ impl WoState {
                     let dx = (self.pointer_location.x - initial_pointer.x) as i32;
                     let dy = (self.pointer_location.y - initial_pointer.y) as i32;
 
-                    let (mut new_w, mut new_h) = *initial_window_size;
+                    let (mut new_w, mut new_h) = initial_window_size;
                     let (mut new_x, mut new_y) =
                         (initial_window_location.x, initial_window_location.y);
 
-                    match *edges {
+                    match edges {
                         ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight => {
                             new_w = (new_w + dx).max(1);
                         }
@@ -206,7 +217,7 @@ impl WoState {
                         }
                         _ => {}
                     }
-                    match *edges {
+                    match edges {
                         ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight => {
                             new_h = (new_h + dy).max(1);
                         }
@@ -218,14 +229,24 @@ impl WoState {
                     }
 
                     // Respect client min/max size constraints.
-                    let (clamped_w, clamped_h) = self.clamp_to_size_hints(window, new_w, new_h);
+                    let (clamped_w, clamped_h) = self.clamp_to_size_hints(&window, new_w, new_h);
 
                     surface.with_pending_state(|s| {
                         s.size = Some((clamped_w, clamped_h).into());
                     });
                     surface.send_configure();
+                    let prev_loc = self
+                        .space
+                        .element_location(&window)
+                        .unwrap_or(initial_window_location);
                     self.space
                         .map_element(window.clone(), (new_x, new_y), false);
+                    self.translate_dialog_children(
+                        &window,
+                        new_x - prev_loc.x,
+                        new_y - prev_loc.y,
+                    );
+                    self.metadata_dirty = true;
                 }
             }
             return;
@@ -243,7 +264,7 @@ impl WoState {
         self.pointer_location = new_pos;
 
         // Process active grab (interactive move/resize) before normal dispatch
-        if let Some(ref grab) = self.grab_state.clone() {
+        if let Some(grab) = self.grab_state.clone() {
             match grab {
                 GrabState::Move {
                     window,
@@ -256,7 +277,17 @@ impl WoState {
                         initial_window_location.x + dx as i32,
                         initial_window_location.y + dy as i32,
                     );
+                    let prev_loc = self
+                        .space
+                        .element_location(&window)
+                        .unwrap_or(initial_window_location);
                     self.space.map_element(window.clone(), new_loc, false);
+                    self.translate_dialog_children(
+                        &window,
+                        new_loc.0 - prev_loc.x,
+                        new_loc.1 - prev_loc.y,
+                    );
+                    self.metadata_dirty = true;
                 }
                 GrabState::Resize {
                     surface,
@@ -270,11 +301,11 @@ impl WoState {
                     let dx = (self.pointer_location.x - initial_pointer.x) as i32;
                     let dy = (self.pointer_location.y - initial_pointer.y) as i32;
 
-                    let (mut new_w, mut new_h) = *initial_window_size;
+                    let (mut new_w, mut new_h) = initial_window_size;
                     let (mut new_x, mut new_y) =
                         (initial_window_location.x, initial_window_location.y);
 
-                    match *edges {
+                    match edges {
                         ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight => {
                             new_w = (new_w + dx).max(1);
                         }
@@ -284,7 +315,7 @@ impl WoState {
                         }
                         _ => {}
                     }
-                    match *edges {
+                    match edges {
                         ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight => {
                             new_h = (new_h + dy).max(1);
                         }
@@ -296,14 +327,24 @@ impl WoState {
                     }
 
                     // Respect client min/max size constraints.
-                    let (clamped_w, clamped_h) = self.clamp_to_size_hints(window, new_w, new_h);
+                    let (clamped_w, clamped_h) = self.clamp_to_size_hints(&window, new_w, new_h);
 
                     surface.with_pending_state(|s| {
                         s.size = Some((clamped_w, clamped_h).into());
                     });
                     surface.send_configure();
+                    let prev_loc = self
+                        .space
+                        .element_location(&window)
+                        .unwrap_or(initial_window_location);
                     self.space
                         .map_element(window.clone(), (new_x, new_y), false);
+                    self.translate_dialog_children(
+                        &window,
+                        new_x - prev_loc.x,
+                        new_y - prev_loc.y,
+                    );
+                    self.metadata_dirty = true;
                 }
             }
             return;

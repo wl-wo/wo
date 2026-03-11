@@ -296,6 +296,8 @@ impl ElectronClientConnection {
 
         // Get buffer properties
         let num_planes = dmabuf.num_planes();
+        let offsets: Vec<u32> = dmabuf.offsets().collect();
+        let strides: Vec<u32> = dmabuf.strides().collect();
         let (w, h) = {
             let size = dmabuf.size();
             (size.w as u32, size.h as u32)
@@ -330,15 +332,14 @@ impl ElectronClientConnection {
 
         // For each plane: fd(4) + offset(8) + stride(4) + modifier(8)
         // Note: We'll collect actual plane data from dmabuf handles iterator
-        for _handle in dmabuf.handles() {
-            // fd: will be sent via ancillary data, so we put 0 as placeholder
+        for plane_idx in 0..num_planes {
+            // fd placeholder — actual fds are sent via SCM_RIGHTS ancillary data
             buf[off..off + 4].copy_from_slice(&0u32.to_le_bytes());
             off += 4;
-            // offset: 0 for now (can be extended later)
-            buf[off..off + 8].copy_from_slice(&0u64.to_le_bytes());
+            let offset = offsets.get(plane_idx).copied().unwrap_or(0);
+            buf[off..off + 8].copy_from_slice(&(offset as u64).to_le_bytes());
             off += 8;
-            // stride: will depend on format (approximate)
-            let stride = (w * 4) as u32; // ARGB8888 = 4 bytes/pixel, adjust as needed
+            let stride = strides.get(plane_idx).copied().unwrap_or(w * 4);
             buf[off..off + 4].copy_from_slice(&stride.to_le_bytes());
             off += 4;
             // modifier (8 bytes) - DrmModifier converts to u64
@@ -595,43 +596,30 @@ impl ElectronProcess {
         let main_js = app_dir.join("dist/main.js");
         
         let child = Command::new(electron_bin)
-            .arg(&main_js)
             .env("WO_IPC_SOCKET", ipc_socket)
             .env("WO_WINDOW_CONFIG", &serialized)
             .env("WO_DRM_RENDER_NODE", render_node)
-            // Wayland Ozone platform: Electron connects to our own Wayland
-            // compositor (WAYLAND_DISPLAY is already set in the env) for
-            // GPU/EGL initialisation.  This gives Chromium a proper
-            // wayland-egl display so hardware-accelerated rasterisation
-            // works.  The BrowserWindow still uses `offscreen: true`, so
-            // no Wayland surfaces are mapped — the connection is used
-            // solely for the EGL context.
+            // ── Chromium flags ──────────────────────────────────────
+            // These MUST appear before the app script on the command
+            // line.  Electron treats everything after the script path
+            // as application arguments (process.argv), NOT Chromium
+            // switches.  Flags here also reach the GPU subprocess
+            // (critical for --in-process-gpu and --use-gl).
             //
-            // The previous `--ozone-platform=headless` approach failed
-            // because headless Ozone has no EGL display, causing the GPU
-            // subprocess to crash with "gl=none,angle=none not found" and
-            // silently falling back to ~1 FPS software rasterisation.
+            // Wayland Ozone platform: Electron connects to our own
+            // Wayland compositor (WAYLAND_DISPLAY is already set in
+            // the env) for GPU/EGL initialisation.
             .arg("--ozone-platform=wayland")
             .arg("--no-sandbox")
             .arg("--disable-gpu-sandbox")
-            // Run GPU code in the main Electron process to avoid the
-            // separate GPU subprocess which adds IPC overhead and can
-            // fail to initialise independently.
-            .arg("--in-process-gpu")
-            // Use native EGL (provided by wayland-egl through the Ozone
-            // Wayland platform) for Chromium's compositor.
-            .arg("--use-gl=egl")
-            // Disable GPU vsync — we are rendering offscreen, there is
-            // no physical display to synchronise with.
+            .arg("--use-gl=angle")
+            .arg("--use-angle=vulkan")
             .arg("--disable-gpu-vsync")
-            // Enable GPU-accelerated rasterization and zero-copy features
-            // so OSR paint callbacks deliver GPU-backed bitmaps instead
-            // of slow CPU readbacks.
-            .arg("--enable-features=CanvasOopRasterization,Vulkan,VaapiVideoDecoder,RawDraw,SharedArrayBuffer")
-            // Use multiple raster threads for parallelised tile painting.
+            .arg("--enable-features=CanvasOopRasterization,Vulkan,VaapiVideoDecoder,RawDraw,SharedArrayBuffer,DefaultANGLEVulkan,VulkanFromANGLE")
             .arg("--num-raster-threads=4")
-            // Don't throttle renderers that lose focus.
             .arg("--disable-renderer-backgrounding")
+            // ── App entry point (must come after Chromium flags) ────
+            .arg(&main_js)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())

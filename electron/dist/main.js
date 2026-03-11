@@ -235,15 +235,22 @@ function debugLog(...args) {
   console.log(...args);
 }
 debugLog("[Wo] Electron starting, NODE_VERSION=", process.version);
+app.commandLine.appendSwitch("use-gl", "angle");
+app.commandLine.appendSwitch("use-angle", "vulkan");
+app.commandLine.appendSwitch("ozone-platform", "wayland");
+app.commandLine.appendSwitch("no-sandbox");
+app.commandLine.appendSwitch("disable-gpu-sandbox");
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
 app.commandLine.appendSwitch("disable-software-rasterizer");
-app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder,SharedArrayBuffer,RawDraw");
+app.commandLine.appendSwitch("enable-features", "CanvasOopRasterization,Vulkan,VaapiVideoDecoder,VaapiVideoEncoder,SharedArrayBuffer,RawDraw,DefaultANGLEVulkan,VulkanFromANGLE");
 app.commandLine.appendSwitch("enable-accelerated-video-decode");
 app.commandLine.appendSwitch("disable-frame-rate-limit");
 app.commandLine.appendSwitch("disable-gpu-vsync");
+app.commandLine.appendSwitch("num-raster-threads", "4");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
 debugLog("[Wo] GPU acceleration flags applied");
 var IPC_SOCKET = process.env.WO_IPC_SOCKET || "/run/user/1000/wo-ipc.sock";
 debugLog("[Wo] WO_WINDOW_CONFIG env =", process.env.WO_WINDOW_CONFIG);
